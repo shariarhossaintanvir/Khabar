@@ -184,6 +184,8 @@ export interface RestaurantReview {
   deliveryRating?: number;
   packagingRating?: number;
   valueRating?: number;
+  reply?: string;
+  repliedAt?: string;
 }
 
 export interface Restaurant {
@@ -1046,3 +1048,465 @@ export const FAQS: FAQItem[] = [
     a: 'We guarantee timely delivery. If weather or traffic causes severe delay, you automatically receive a ৳50 apology voucher on your next order.',
   },
 ];
+
+// ==========================================
+// ECOSYSTEM DATA: ADMIN, PARTNER & RIDER
+// ==========================================
+
+export interface PendingRestaurant {
+  id: string;
+  name: string;
+  bengaliName: string;
+  ownerName: string;
+  phone: string;
+  email: string;
+  cuisine: string[];
+  area: string;
+  city: string;
+  address: string;
+  submittedDate: string;
+  tradeLicenseNumber: string;
+  tinNumber: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'NEEDS_CHANGES';
+  logo: string;
+  coverImage: string;
+  notes?: string;
+}
+
+export const DEMO_PENDING_RESTAURANTS: PendingRestaurant[] = [
+  {
+    id: 'pend-1',
+    name: 'Madchef Dhanmondi',
+    bengaliName: 'ম্যাডশেফ ধানমন্ডি',
+    ownerName: 'Fahim Morshed',
+    phone: '+880 1819-234567',
+    email: 'fahim@madchefbd.com',
+    cuisine: ['Burgers', 'Fast Food', 'Shakes'],
+    area: 'Dhanmondi',
+    city: 'Dhaka',
+    address: 'Plot 79, Satmasjid Road, Dhanmondi 9A',
+    submittedDate: '2026-09-20',
+    tradeLicenseNumber: 'TRAD/DSCC/024819/2025',
+    tinNumber: '7482-1920-4491',
+    status: 'PENDING',
+    logo: 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=120&auto=format&fit=crop&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1550547660-d9450f859349?w=800&auto=format&fit=crop&q=80',
+    notes: 'Submitted sanitation certificate and trade license. Requesting 15% promotional commission rate for first 3 months.',
+  },
+  {
+    id: 'pend-2',
+    name: 'Shawarma House Banani',
+    bengaliName: 'শাওয়ারমা হাউস বনানী',
+    ownerName: 'Kazi Noman',
+    phone: '+880 1711-987654',
+    email: 'noman@shawarmahouse.com',
+    cuisine: ['Middle Eastern', 'Shawarma', 'BBQ'],
+    area: 'Banani',
+    city: 'Dhaka',
+    address: 'Road 11, Block D, Banani Commercial Area',
+    submittedDate: '2026-09-19',
+    tradeLicenseNumber: 'TRAD/DNCC/081944/2025',
+    tinNumber: '6192-3847-1092',
+    status: 'PENDING',
+    logo: 'https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?w=120&auto=format&fit=crop&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1529193591184-b1d58069ecdd?w=800&auto=format&fit=crop&q=80',
+    notes: 'Authentic Syrian shawarma and platters. Kitchen inspection completed by Food Safety Auditor.',
+  },
+  {
+    id: 'pend-3',
+    name: 'Chittagong Mezban Bari',
+    bengaliName: 'চট্টগ্রাম মেজবান বাড়ি',
+    ownerName: 'Hafizur Rahman',
+    phone: '+880 1912-334455',
+    email: 'hafiz@mezbanbari.com',
+    cuisine: ['Bangladeshi', 'Mezban Meat', 'Biryani'],
+    area: 'Mirpur (All Sections)',
+    city: 'Dhaka',
+    address: 'Section 10, Mirpur Circle 10',
+    submittedDate: '2026-09-18',
+    tradeLicenseNumber: 'TRAD/DNCC/092817/2025',
+    tinNumber: '5819-2049-7712',
+    status: 'PENDING',
+    logo: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=120&auto=format&fit=crop&q=80',
+    coverImage: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80',
+    notes: 'Traditional Chittagong mezbani beef and chana dal specialists. Looking to onboard 2 delivery lines.',
+  },
+];
+
+export interface RiderProfile {
+  id: string;
+  name: string;
+  phone: string;
+  avatar: string;
+  zone: string;
+  city: string;
+  vehicleType: 'Motorbike' | 'Scooter' | 'Bicycle';
+  vehicleModel: string;
+  vehicleNumber: string;
+  rating: number;
+  totalTrips: number;
+  completedDeliveries: number;
+  activeDeliveryId?: string;
+  status: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'SUSPENDED';
+  todayEarnings: number;
+  weekEarnings: number;
+  monthEarnings: number;
+  acceptanceRate: number;
+  completionRate: number;
+  avgDeliveryTimeMin: number;
+  documentsVerified: boolean;
+  joinedDate: string;
+  currentLocation: { lat: number; lng: number; area: string };
+}
+
+export const DEMO_RIDERS: RiderProfile[] = [
+  {
+    id: 'rider-1',
+    name: 'Rahim Sheikh',
+    phone: '+880 1712-445566',
+    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120&auto=format&fit=crop&q=80',
+    zone: 'Dhanmondi',
+    city: 'Dhaka',
+    vehicleType: 'Motorbike',
+    vehicleModel: 'Honda CB Shine 125cc',
+    vehicleNumber: 'Dhaka Metro-H-44-1290',
+    rating: 4.92,
+    totalTrips: 1420,
+    completedDeliveries: 14,
+    activeDeliveryId: 'KH-84920',
+    status: 'ONLINE',
+    todayEarnings: 1480,
+    weekEarnings: 8920,
+    monthEarnings: 34200,
+    acceptanceRate: 98,
+    completionRate: 99,
+    avgDeliveryTimeMin: 22,
+    documentsVerified: true,
+    joinedDate: '2024-03-12',
+    currentLocation: { lat: 23.7465, lng: 90.3762, area: 'Dhanmondi 8A' },
+  },
+  {
+    id: 'rider-2',
+    name: 'Tanvir Hasan',
+    phone: '+880 1819-332211',
+    avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=120&auto=format&fit=crop&q=80',
+    zone: 'Gulshan (1 & 2)',
+    city: 'Dhaka',
+    vehicleType: 'Motorbike',
+    vehicleModel: 'Yamaha Saluto 125',
+    vehicleNumber: 'Dhaka Metro-L-19-4820',
+    rating: 4.88,
+    totalTrips: 1840,
+    completedDeliveries: 18,
+    status: 'BUSY',
+    todayEarnings: 1820,
+    weekEarnings: 9400,
+    monthEarnings: 36500,
+    acceptanceRate: 95,
+    completionRate: 98,
+    avgDeliveryTimeMin: 24,
+    documentsVerified: true,
+    joinedDate: '2023-11-05',
+    currentLocation: { lat: 23.7925, lng: 90.4078, area: 'Gulshan 2 Circle' },
+  },
+  {
+    id: 'rider-3',
+    name: 'Sajid Al Mahmud',
+    phone: '+880 1912-778899',
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
+    zone: 'Mirpur (All Sections)',
+    city: 'Dhaka',
+    vehicleType: 'Motorbike',
+    vehicleModel: 'TVS Metro Plus',
+    vehicleNumber: 'Dhaka Metro-H-28-5910',
+    rating: 4.85,
+    totalTrips: 920,
+    completedDeliveries: 9,
+    status: 'ONLINE',
+    todayEarnings: 980,
+    weekEarnings: 6400,
+    monthEarnings: 27800,
+    acceptanceRate: 94,
+    completionRate: 97,
+    avgDeliveryTimeMin: 26,
+    documentsVerified: true,
+    joinedDate: '2024-06-18',
+    currentLocation: { lat: 23.8071, lng: 90.3686, area: 'Mirpur 10' },
+  },
+  {
+    id: 'rider-4',
+    name: 'Imran Hossain',
+    phone: '+880 1612-554433',
+    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80',
+    zone: 'Uttara (Sectors 1–14)',
+    city: 'Dhaka',
+    vehicleType: 'Motorbike',
+    vehicleModel: 'Bajaj Discover 110',
+    vehicleNumber: 'Dhaka Metro-H-31-8842',
+    rating: 4.90,
+    totalTrips: 1150,
+    completedDeliveries: 12,
+    status: 'OFFLINE',
+    todayEarnings: 1240,
+    weekEarnings: 7850,
+    monthEarnings: 31200,
+    acceptanceRate: 96,
+    completionRate: 99,
+    avgDeliveryTimeMin: 21,
+    documentsVerified: true,
+    joinedDate: '2024-01-20',
+    currentLocation: { lat: 23.8759, lng: 90.3795, area: 'Uttara Sector 7' },
+  },
+  {
+    id: 'rider-5',
+    name: 'Kalam Miah',
+    phone: '+880 1711-224466',
+    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=120&auto=format&fit=crop&q=80',
+    zone: 'Mohammadpur',
+    city: 'Dhaka',
+    vehicleType: 'Scooter',
+    vehicleModel: 'Hero Pleasure Plus',
+    vehicleNumber: 'Dhaka Metro-S-12-3490',
+    rating: 4.79,
+    totalTrips: 640,
+    completedDeliveries: 6,
+    status: 'SUSPENDED',
+    todayEarnings: 0,
+    weekEarnings: 3200,
+    monthEarnings: 19400,
+    acceptanceRate: 88,
+    completionRate: 91,
+    avgDeliveryTimeMin: 32,
+    documentsVerified: true,
+    joinedDate: '2024-05-10',
+    currentLocation: { lat: 23.7554, lng: 90.3644, area: 'Mohammadpur Town Hall' },
+  },
+];
+
+export interface PaymentTransaction {
+  id: string;
+  orderId: string;
+  customerName: string;
+  customerPhone: string;
+  restaurantName: string;
+  amount: number;
+  method: 'bKash' | 'Nagad' | 'Card' | 'Cash on Delivery';
+  status: 'SUCCESS' | 'REFUNDED' | 'FAILED' | 'PENDING';
+  transactionReference: string;
+  gatewayFee: number;
+  timestamp: string;
+  refundReason?: string;
+}
+
+export const DEMO_TRANSACTIONS: PaymentTransaction[] = [
+  {
+    id: 'TXN-90281',
+    orderId: 'KH-84920',
+    customerName: 'Shariar Hossain',
+    customerPhone: '+880 1712-345678',
+    restaurantName: "Sultan's Dine",
+    amount: 1045,
+    method: 'bKash',
+    status: 'SUCCESS',
+    transactionReference: 'BK9A0281F4',
+    gatewayFee: 15.6,
+    timestamp: '2026-09-21 14:18',
+  },
+  {
+    id: 'TXN-90280',
+    orderId: 'KH-84919',
+    customerName: 'Ayesha Siddika',
+    customerPhone: '+880 1819-223344',
+    restaurantName: 'Kacchi Bhai',
+    amount: 820,
+    method: 'Nagad',
+    status: 'SUCCESS',
+    transactionReference: 'NG482019A1',
+    gatewayFee: 12.3,
+    timestamp: '2026-09-21 13:54',
+  },
+  {
+    id: 'TXN-90279',
+    orderId: 'KH-84918',
+    customerName: 'Nafis Chowdhury',
+    customerPhone: '+880 1912-998877',
+    restaurantName: 'Chillox',
+    amount: 680,
+    method: 'Card',
+    status: 'SUCCESS',
+    transactionReference: 'VS91028347',
+    gatewayFee: 13.6,
+    timestamp: '2026-09-21 13:22',
+  },
+  {
+    id: 'TXN-90278',
+    orderId: 'KH-84917',
+    customerName: 'Mahmudur Rahman',
+    customerPhone: '+880 1711-556677',
+    restaurantName: 'Pizza Burg',
+    amount: 1250,
+    method: 'Cash on Delivery',
+    status: 'SUCCESS',
+    transactionReference: 'COD-VERIFIED',
+    gatewayFee: 0,
+    timestamp: '2026-09-21 12:45',
+  },
+  {
+    id: 'TXN-90277',
+    orderId: 'KH-84914',
+    customerName: 'Sabrina Noor',
+    customerPhone: '+880 1612-443322',
+    restaurantName: 'Takeout',
+    amount: 540,
+    method: 'bKash',
+    status: 'REFUNDED',
+    transactionReference: 'BK77109283-REF',
+    gatewayFee: 8.1,
+    timestamp: '2026-09-21 11:30',
+    refundReason: 'Item out of stock at restaurant during peak lunch hours.',
+  },
+];
+
+export interface InventoryItem {
+  id: string;
+  restaurantId: string;
+  foodName: string;
+  bengaliName: string;
+  category: string;
+  currentStock: number;
+  lowStockThreshold: number;
+  unit: string;
+  status: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+  lastRestocked: string;
+}
+
+export const DEMO_INVENTORY: InventoryItem[] = [
+  {
+    id: 'inv-1',
+    restaurantId: 'rest-1',
+    foodName: 'Mutton Kacchi Basmati (Full)',
+    bengaliName: 'খাসির কাচ্চি বাসমতি',
+    category: 'Kacchi',
+    currentStock: 48,
+    lowStockThreshold: 15,
+    unit: 'portions',
+    status: 'IN_STOCK',
+    lastRestocked: 'Today, 11:00 AM',
+  },
+  {
+    id: 'inv-2',
+    restaurantId: 'rest-1',
+    foodName: 'Special Chicken Roast',
+    bengaliName: 'স্পেশাল চিকেন রোস্ট',
+    category: 'Chicken',
+    currentStock: 8,
+    lowStockThreshold: 12,
+    unit: 'portions',
+    status: 'LOW_STOCK',
+    lastRestocked: 'Today, 10:30 AM',
+  },
+  {
+    id: 'inv-3',
+    restaurantId: 'rest-1',
+    foodName: 'Traditional Borhani (1 Litre)',
+    bengaliName: 'ট্রেডিশনাল বোরহানি',
+    category: 'Drinks',
+    currentStock: 0,
+    lowStockThreshold: 10,
+    unit: 'bottles',
+    status: 'OUT_OF_STOCK',
+    lastRestocked: 'Yesterday',
+  },
+  {
+    id: 'inv-4',
+    restaurantId: 'rest-1',
+    foodName: 'Shahi Jorda with Gulab Jamun',
+    bengaliName: 'শাহী জর্দা',
+    category: 'Desserts',
+    currentStock: 25,
+    lowStockThreshold: 10,
+    unit: 'cups',
+    status: 'IN_STOCK',
+    lastRestocked: 'Today, 11:30 AM',
+  },
+];
+
+export interface RiderDeliveryRecord {
+  id: string;
+  orderId: string;
+  restaurantName: string;
+  pickupArea: string;
+  dropArea: string;
+  fareEarned: number;
+  tip: number;
+  bonus: number;
+  distanceKm: number;
+  durationMin: number;
+  completedAt: string;
+  status: 'COMPLETED' | 'CANCELLED';
+  customerRating: number;
+}
+
+export const DEMO_RIDER_DELIVERIES: RiderDeliveryRecord[] = [
+  {
+    id: 'trip-101',
+    orderId: 'KH-84920',
+    restaurantName: "Sultan's Dine",
+    pickupArea: 'Dhanmondi 8A',
+    dropArea: 'Road 12, Dhanmondi',
+    fareEarned: 80,
+    tip: 30,
+    bonus: 20,
+    distanceKm: 1.8,
+    durationMin: 19,
+    completedAt: 'Today, 2:15 PM',
+    status: 'COMPLETED',
+    customerRating: 5,
+  },
+  {
+    id: 'trip-102',
+    orderId: 'KH-84912',
+    restaurantName: 'Chillox',
+    pickupArea: 'Dhanmondi 2',
+    dropArea: 'Green Road, Panthapath',
+    fareEarned: 95,
+    tip: 20,
+    bonus: 15,
+    distanceKm: 2.6,
+    durationMin: 23,
+    completedAt: 'Today, 1:20 PM',
+    status: 'COMPLETED',
+    customerRating: 5,
+  },
+  {
+    id: 'trip-103',
+    orderId: 'KH-84901',
+    restaurantName: 'Kacchi Bhai',
+    pickupArea: 'Satmasjid Road',
+    dropArea: 'Shankar, West Dhanmondi',
+    fareEarned: 75,
+    tip: 0,
+    bonus: 25,
+    distanceKm: 1.4,
+    durationMin: 16,
+    completedAt: 'Today, 12:40 PM',
+    status: 'COMPLETED',
+    customerRating: 4.8,
+  },
+  {
+    id: 'trip-104',
+    orderId: 'KH-84880',
+    restaurantName: 'Takeout',
+    pickupArea: 'Dhanmondi 9A',
+    dropArea: 'Kalabagan 1st Lane',
+    fareEarned: 70,
+    tip: 15,
+    bonus: 10,
+    distanceKm: 1.2,
+    durationMin: 14,
+    completedAt: 'Today, 11:55 AM',
+    status: 'COMPLETED',
+    customerRating: 5,
+  },
+];
+

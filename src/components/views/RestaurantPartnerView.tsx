@@ -16,9 +16,33 @@ import {
   Calendar,
   DollarSign,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  Plus,
+  Edit2,
+  Trash2,
+  Star,
+  Users,
+  Eye,
+  Sliders,
+  Sparkles,
+  MapPin,
+  Tag,
+  MessageSquare,
+  Package,
+  Layers,
+  ShoppingBag,
 } from 'lucide-react';
 import { useKhabar, OrderRecord } from '../../context/KhabarContext';
+import { Restaurant, MenuItem, AddOnOption } from '../../data/khabarData';
+import { AppShell, NavItemConfig } from '../shared/AppShell';
+import { StatCard } from '../shared/StatCard';
+import { ChartCard } from '../shared/ChartCard';
+import { DataTable } from '../shared/DataTable';
+import { StatusBadge } from '../shared/StatusBadge';
+import { FilterBar } from '../shared/FilterBar';
+import { ConfirmationDialog } from '../shared/ConfirmationDialog';
+import { AddFoodModal, CreateOfferModal } from '../admin/AdminModals';
+import { OrderDetailsModal, ReplyReviewModal } from '../partner/PartnerModals';
 
 export const RestaurantPartnerView: React.FC = () => {
   const {
@@ -27,498 +51,1057 @@ export const RestaurantPartnerView: React.FC = () => {
     reservations,
     updateOrderStatus,
     toggleMenuItemAvailability,
-    setPortalMode,
+    toggleRestaurantOpenStatus,
+    addMenuItem,
+    deleteMenuItem,
+    replyToReview,
+    inventory,
+    updateInventoryStock,
     formatBDT,
-    showToast
+    showToast,
   } = useKhabar();
 
-  // Select first restaurant or allow switching
-  const [selectedRestaurantId, setSelectedRestaurantId] = useState<string>(restaurants[0]?.id || 'rest-1');
+  // Selected branch/restaurant outlet
+  const [selectedOutletId, setSelectedOutletId] = useState<string>(restaurants[0]?.id || 'takeout');
+  const activeRest: Restaurant = restaurants.find((r) => r.id === selectedOutletId) || restaurants[0];
+
+  // Navigation
+  const [activeNav, setActiveNav] = useState<string>('kds');
+
+  // Kitchen Sound Toggle
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'menu' | 'bookings'>('pipeline');
 
-  const activeRest = restaurants.find((r) => r.id === selectedRestaurantId) || restaurants[0];
+  // Modals State
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState<OrderRecord | null>(null);
+  const [isAddFoodOpen, setIsAddFoodOpen] = useState(false);
+  const [isCreateOfferOpen, setIsCreateOfferOpen] = useState(false);
+  const [activeReplyReview, setActiveReplyReview] = useState<{ id: string; name: string; comment: string } | null>(null);
 
-  // Filter orders related to this restaurant (or show demo orders if none)
-  const restOrders = orders.filter((o) => o.restaurantId === selectedRestaurantId || o.restaurantName.toLowerCase().includes(activeRest.name.toLowerCase()));
+  // Confirmation Dialog
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    confirmText?: string;
+    isDestructive?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    onConfirm: () => {},
+  });
 
-  // Categorize into Kanban stages
-  const newOrders = restOrders.filter((o) => o.status === 'CONFIRMED' || o.status === 'PLACED');
+  // Filter states
+  const [menuSearch, setMenuSearch] = useState('');
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState('All');
+
+  // Partner Nav Items
+  const partnerNavItems: NavItemConfig[] = [
+    { id: 'overview', label: 'Overview', icon: <TrendingUp className="w-4 h-4" /> },
+    {
+      id: 'kds',
+      label: 'Live Kitchen KDS',
+      icon: <ChefHat className="w-4 h-4" />,
+      badge: orders.filter((o) => o.status === 'CONFIRMED' || o.status === 'PREPARING').length,
+      badgeColor: 'brand',
+    },
+    { id: 'orders', label: 'Order History', icon: <ShoppingBag className="w-4 h-4" /> },
+    { id: 'menu', label: 'Menu Manager', icon: <Tag className="w-4 h-4" />, badge: activeRest?.menuItems.length },
+    { id: 'inventory', label: 'Inventory & Stock', icon: <Package className="w-4 h-4" /> },
+    { id: 'reservations', label: 'Table Bookings', icon: <Calendar className="w-4 h-4" /> },
+    { id: 'reviews', label: 'Customer Reviews', icon: <Star className="w-4 h-4" /> },
+    { id: 'analytics', label: 'Analytics', icon: <Layers className="w-4 h-4" /> },
+    { id: 'profile', label: 'Outlet Profile & Preview', icon: <Store className="w-4 h-4" /> },
+    { id: 'settings', label: 'Kitchen Settings', icon: <Sliders className="w-4 h-4" /> },
+  ];
+
+  // Orders filtered for this restaurant
+  const restOrders = orders.filter(
+    (o) => o.restaurantId === activeRest.id || o.restaurantName.toLowerCase().includes(activeRest.name.toLowerCase())
+  );
+
+  // KDS Stages
+  const newOrders = restOrders.filter((o) => o.status === 'PLACED' || o.status === 'CONFIRMED');
   const preparingOrders = restOrders.filter((o) => o.status === 'PREPARING');
   const readyOrders = restOrders.filter((o) => o.status === 'PICKED_UP');
   const transitOrders = restOrders.filter((o) => o.status === 'ON_THE_WAY');
 
-  // Reservations for this restaurant
-  const restReservations = reservations.filter((res) => res.restaurantId === selectedRestaurantId || res.restaurantName.includes(activeRest.name));
+  // Header Outlet Controls
+  const headerControls = (
+    <div className="flex items-center gap-3 w-full max-w-lg justify-center sm:justify-end">
+      {/* Branch Selector */}
+      <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-2xl border border-slate-200/80">
+        <Store className="w-3.5 h-3.5 text-amber-600" />
+        <select
+          value={selectedOutletId}
+          onChange={(e) => {
+            setSelectedOutletId(e.target.value);
+            showToast(`Switched active branch to ${restaurants.find((r) => r.id === e.target.value)?.name}`);
+          }}
+          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden"
+        >
+          {restaurants.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
-  const handleAcceptOrder = (orderId: string) => {
-    updateOrderStatus(orderId, 'PREPARING');
-    showToast(`Order #${orderId} accepted! Kitchen notified to start prep.`, 'success');
-  };
+      {/* Kitchen Open / Closed Toggle */}
+      <button
+        onClick={() => toggleRestaurantOpenStatus(activeRest.id)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl text-xs font-bold transition-all border ${
+          activeRest.isOpen
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+            : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+        }`}
+      >
+        <span
+          className={`w-2 h-2 rounded-full ${
+            activeRest.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+          }`}
+        />
+        <span>{activeRest.isOpen ? 'Accepting Orders' : 'Kitchen Closed'}</span>
+      </button>
 
-  const handleMarkReady = (orderId: string) => {
-    updateOrderStatus(orderId, 'PICKED_UP');
-    showToast(`Order #${orderId} marked ready for rider pickup!`, 'success');
-  };
-
-  const handleHandoverRider = (orderId: string) => {
-    updateOrderStatus(orderId, 'ON_THE_WAY');
-    showToast(`Order #${orderId} handed over to rider!`, 'success');
-  };
+      {/* Audio Bell Alert Toggle */}
+      <button
+        onClick={() => {
+          setSoundEnabled(!soundEnabled);
+          showToast(soundEnabled ? 'Kitchen order chimes muted.' : 'Kitchen order chimes active.');
+        }}
+        className={`p-2 rounded-xl border transition-colors ${
+          soundEnabled
+            ? 'bg-amber-50 text-amber-600 border-amber-200'
+            : 'bg-slate-100 text-slate-400 border-slate-200'
+        }`}
+        title={soundEnabled ? 'Mute Kitchen Audio' : 'Unmute Kitchen Audio'}
+      >
+        {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+      </button>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-surface-100/70 text-slate-900 py-8 px-4 sm:px-6 lg:px-8 pb-28">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Top Kitchen Header Bar */}
-        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-surface-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center">
-              <ChefHat className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="font-display font-black text-xl sm:text-2xl text-slate-900 tracking-tight">
-                  Kitchen Partner POS
-                </h1>
-                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  Kitchen Live & Accepting Orders
-                </span>
+    <AppShell
+      portal="partner"
+      portalBadge="Restaurant POS"
+      portalTitle={activeRest.name}
+      navItems={partnerNavItems}
+      activeNavId={activeNav}
+      onNavSelect={setActiveNav}
+      headerControls={headerControls}
+    >
+      {/* 1. OVERVIEW VIEW */}
+      {activeNav === 'overview' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          {/* Outlet Banner */}
+          <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-card flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <img
+                src={activeRest.logo}
+                alt={activeRest.name}
+                className="w-16 h-16 rounded-2xl object-cover border border-slate-100 shadow-xs"
+              />
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="font-display font-black text-2xl text-slate-900 tracking-tight">
+                    Good afternoon, {activeRest.name}
+                  </h1>
+                  <StatusBadge status={activeRest.isOpen ? 'ACTIVE' : 'CLOSED'} size="sm" pulse />
+                </div>
+                <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+                  Here is your kitchen and delivery operations overview today in {activeRest.address}.
+                </p>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Real-time kitchen display system (KDS) & order preparation pipeline
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setActiveNav('kds')}
+                className="px-4 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs hover:shadow-brand transition-all"
+              >
+                <ChefHat className="w-4 h-4" />
+                <span>Open Live Kitchen Board</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Key Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <StatCard
+              title="Today's Orders"
+              value="68 Orders"
+              icon={<ShoppingBag className="w-5 h-5" />}
+              trend={{ value: '+14.2%', isPositive: true }}
+              sparkline={[20, 32, 28, 45, 52, 68]}
+              accent="brand"
+              onClick={() => setActiveNav('kds')}
+            />
+            <StatCard
+              title="Today's Gross Sales"
+              value="৳42,850"
+              icon={<DollarSign className="w-5 h-5" />}
+              trend={{ value: '+18.5%', isPositive: true }}
+              sparkline={[140, 180, 220, 310, 380, 428]}
+              accent="emerald"
+            />
+            <StatCard
+              title="Average Order Value"
+              value="৳630"
+              icon={<TrendingUp className="w-5 h-5" />}
+              trend={{ value: '+4.0%', isPositive: true }}
+              accent="blue"
+            />
+            <StatCard
+              title="Customer Rating"
+              value={`★ ${activeRest.rating}`}
+              icon={<Star className="w-5 h-5" />}
+              subtext={`${activeRest.reviewsCount} customer reviews`}
+              accent="amber"
+              onClick={() => setActiveNav('reviews')}
+            />
+            <StatCard
+              title="Pending In Kitchen"
+              value={`${newOrders.length + preparingOrders.length} Active`}
+              icon={<Clock className="w-5 h-5" />}
+              subtext="Avg prep time: 18 min"
+              accent="purple"
+              onClick={() => setActiveNav('kds')}
+            />
+            <StatCard
+              title="Dishes In Stock"
+              value={`${activeRest.menuItems.filter((m) => m.isAvailable !== false).length} / ${activeRest.menuItems.length}`}
+              icon={<Tag className="w-5 h-5" />}
+              subtext="Full catalog active"
+              accent="emerald"
+              onClick={() => setActiveNav('menu')}
+            />
+          </div>
+
+          {/* Analytics Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-8">
+              <ChartCard
+                title="Weekly Restaurant Revenue (BDT)"
+                subtitle="Net kitchen sales after KHABAR merchant commission"
+                data={[
+                  { label: 'Mon', value: 32000, formattedValue: '৳32,000' },
+                  { label: 'Tue', value: 38500, formattedValue: '৳38,500' },
+                  { label: 'Wed', value: 35200, formattedValue: '৳35,200' },
+                  { label: 'Thu', value: 41000, formattedValue: '৳41,000' },
+                  { label: 'Fri', value: 58400, formattedValue: '৳58,400' },
+                  { label: 'Sat', value: 62000, formattedValue: '৳62,000' },
+                  { label: 'Sun', value: 42850, formattedValue: '৳42,850' },
+                ]}
+                type="area"
+                height={220}
+              />
+            </div>
+            <div className="lg:col-span-4">
+              <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-card space-y-4 h-full flex flex-col justify-between">
+                <div>
+                  <h3 className="font-display font-black text-lg text-slate-900">Bestselling Dishes</h3>
+                  <p className="text-xs text-slate-400">Items driving highest revenue this week</p>
+
+                  <div className="mt-4 space-y-3">
+                    {activeRest.menuItems.slice(0, 4).map((item, idx) => (
+                      <div key={item.id} className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-5 h-5 rounded-md bg-brand-50 text-brand-700 font-bold flex items-center justify-center text-[10px]">
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-slate-800 truncate max-w-[140px]">{item.name}</span>
+                        </div>
+                        <strong className="text-slate-900">৳{item.price}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setActiveNav('menu')}
+                  className="w-full py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+                >
+                  Manage Full Menu
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. LIVE ORDER BOARD (KITCHEN DISPLAY SYSTEM - KDS) */}
+      {activeNav === 'kds' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-display font-black text-xl text-slate-900">
+                  Kitchen Display System (KDS)
+                </h2>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+              </div>
+              <p className="text-xs text-slate-500">
+                Move orders through live prep stages to coordinate with arriving riders
               </p>
             </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => showToast('Kitchen pipeline synced.')}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
+                title="Refresh KDS"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Branch Switcher */}
-            <select
-              value={selectedRestaurantId}
-              onChange={(e) => setSelectedRestaurantId(e.target.value)}
-              className="px-3 py-2 rounded-xl bg-surface-50 border border-surface-200 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-brand-500"
-            >
-              {restaurants.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} ({r.address.split(',')[0]})
-                </option>
-              ))}
-            </select>
-
-            {/* Sound alert toggle */}
-            <button
-              onClick={() => {
-                setSoundEnabled(!soundEnabled);
-                showToast(soundEnabled ? 'Kitchen order chime muted' : 'Kitchen order chime enabled');
-              }}
-              className={`p-2.5 rounded-xl border transition-colors ${
-                soundEnabled
-                  ? 'bg-amber-50 border-amber-200 text-amber-700'
-                  : 'bg-surface-50 border-surface-200 text-slate-400'
-              }`}
-              title={soundEnabled ? 'Order sound alert ON' : 'Order sound alert OFF'}
-            >
-              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-            </button>
-
-            {/* Back to customer app */}
-            <button
-              onClick={() => setPortalMode('customer')}
-              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-brand-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Exit POS</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Daily Stats Summary */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-          <div className="bg-white p-4 rounded-2xl border border-surface-200 shadow-2xs">
-            <span className="text-slate-400 text-xs font-medium block">Today's Kitchen Orders</span>
-            <span className="font-display font-black text-2xl text-slate-900 mt-1 block">
-              {restOrders.length + 28}
-            </span>
-            <span className="text-[11px] text-emerald-600 font-semibold flex items-center gap-1 mt-1">
-              <TrendingUp className="w-3 h-3" /> 100% on-time prep
-            </span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-surface-200 shadow-2xs">
-            <span className="text-slate-400 text-xs font-medium block">Today's Kitchen Payout</span>
-            <span className="font-display font-black text-2xl text-slate-900 mt-1 block">
-              {formatBDT(32450)}
-            </span>
-            <span className="text-[11px] text-slate-500 mt-1 block">Settled daily to bank</span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-surface-200 shadow-2xs">
-            <span className="text-slate-400 text-xs font-medium block">Avg Preparation Time</span>
-            <span className="font-display font-black text-2xl text-amber-600 mt-1 block">
-              16.4 mins
-            </span>
-            <span className="text-[11px] text-emerald-600 font-semibold mt-1 block">
-              Target: under 20 mins
-            </span>
-          </div>
-
-          <div className="bg-white p-4 rounded-2xl border border-surface-200 shadow-2xs">
-            <span className="text-slate-400 text-xs font-medium block">Table Reservations</span>
-            <span className="font-display font-black text-2xl text-blue-600 mt-1 block">
-              {restReservations.length + 4}
-            </span>
-            <span className="text-[11px] text-slate-500 mt-1 block">For tonight's service</span>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="flex items-center gap-2 border-b border-surface-200 pb-2">
-          <button
-            onClick={() => setActiveTab('pipeline')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-              activeTab === 'pipeline'
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'bg-white border border-surface-200 text-slate-600 hover:bg-surface-50'
-            }`}
-          >
-            <ChefHat className="w-4 h-4" />
-            <span>Kitchen Pipeline (KDS)</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px]">
-              {newOrders.length + preparingOrders.length} active
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('menu')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-              activeTab === 'menu'
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'bg-white border border-surface-200 text-slate-600 hover:bg-surface-50'
-            }`}
-          >
-            <Store className="w-4 h-4" />
-            <span>Stock & Menu Control</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px]">
-              {activeRest.menuItems.length} items
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('bookings')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-              activeTab === 'bookings'
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'bg-white border border-surface-200 text-slate-600 hover:bg-surface-50'
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            <span>Table Bookings</span>
-            <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[10px]">
-              {restReservations.length}
-            </span>
-          </button>
-        </div>
-
-        {/* Pipeline Tab (Kanban Display) */}
-        {activeTab === 'pipeline' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Column 1: New Orders (Needs Acceptance) */}
-            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-surface-200 shadow-2xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-surface-100">
+          {/* 4 Kanban Columns */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
+            {/* Column 1: New / Confirmed */}
+            <div className="bg-slate-100/70 p-4 rounded-3xl border border-slate-200/60 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
-                  <h3 className="font-display font-bold text-sm text-slate-900">
-                    New Incoming Orders
-                  </h3>
+                  <span className="w-2.5 h-2.5 rounded-full bg-brand-500" />
+                  <h4 className="font-display font-black text-xs uppercase tracking-wider text-slate-800">
+                    1. New Incoming
+                  </h4>
                 </div>
-                <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 text-xs font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-brand-100 text-brand-800 text-xs font-black">
                   {newOrders.length}
                 </span>
               </div>
 
-              {newOrders.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs">
-                  No pending incoming orders at this second.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {newOrders.map((ord) => (
+              <div className="space-y-3">
+                {newOrders.length === 0 ? (
+                  <p className="text-center py-8 text-xs text-slate-400 italic">No new incoming orders</p>
+                ) : (
+                  newOrders.map((o) => (
                     <div
-                      key={ord.id}
-                      className="p-4 rounded-2xl border-2 border-brand-500/40 bg-brand-50/20 space-y-3 animate-fadeIn"
+                      key={o.id}
+                      className="bg-white rounded-2xl p-4 border border-slate-200 shadow-card hover:shadow-card-hover transition-all space-y-3 group"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-xs text-brand-600">
-                          Order #{ord.id}
-                        </span>
-                        <span className="text-[10px] font-bold text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          Accept within 2m
+                        <strong className="font-mono text-xs text-brand-600 font-bold">#{o.id}</strong>
+                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                          Placed {o.placedAt}
                         </span>
                       </div>
 
-                      <div className="space-y-1 text-xs">
-                        {ord.items.map((it) => (
-                          <div key={it.id} className="flex justify-between font-medium text-slate-800">
+                      <div>
+                        <h5 className="font-bold text-xs text-slate-900">{o.customerName}</h5>
+                        <p className="text-[11px] text-slate-500">{o.deliveryArea}</p>
+                      </div>
+
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs space-y-1">
+                        {o.items.map((i) => (
+                          <div key={i.id} className="flex justify-between text-slate-700">
                             <span>
-                              {it.quantity}x {it.menuItem.name}
+                              <strong>{i.quantity}x</strong> {i.menuItem.name}
                             </span>
-                            {it.selectedSize && <span className="text-slate-500">({it.selectedSize})</span>}
+                            <span className="font-semibold">৳{i.itemTotal}</span>
                           </div>
                         ))}
                       </div>
 
-                      <div className="pt-2 border-t border-brand-100 flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-900">
-                          {formatBDT(ord.total)}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleAcceptOrder(ord.id)}
-                            className="px-3 py-1.5 rounded-xl bg-brand-500 hover:bg-brand-600 text-white text-xs font-bold transition-all shadow-xs"
-                          >
-                            Accept & Cook
-                          </button>
-                        </div>
+                      {o.deliveryInstructions && (
+                        <p className="text-[10px] text-amber-700 bg-amber-50/70 p-2 rounded-lg border border-amber-100">
+                          ⚠️ {o.deliveryInstructions}
+                        </p>
+                      )}
+
+                      <div className="pt-1 flex items-center gap-2">
+                        <button
+                          onClick={() => setSelectedOrderDetails(o)}
+                          className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs"
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            updateOrderStatus(o.id, 'PREPARING');
+                            showToast(`Order #${o.id} accepted! Kitchen notified.`, 'success');
+                          }}
+                          className="flex-1 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold transition-all shadow-xs"
+                        >
+                          Accept Order →
+                        </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
 
-            {/* Column 2: In the Kitchen (Cooking) */}
-            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-surface-200 shadow-2xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-surface-100">
+            {/* Column 2: Preparing In Kitchen */}
+            <div className="bg-amber-50/50 p-4 rounded-3xl border border-amber-200/60 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-amber-200">
                 <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-amber-500" />
-                  <h3 className="font-display font-bold text-sm text-slate-900">
-                    Preparing in Kitchen
-                  </h3>
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                  <h4 className="font-display font-black text-xs uppercase tracking-wider text-amber-900">
+                    2. In Cooking
+                  </h4>
                 </div>
-                <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-xs font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-xs font-black">
                   {preparingOrders.length}
                 </span>
               </div>
 
-              {preparingOrders.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs">
-                  All accepted orders are packed and ready.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {preparingOrders.map((ord) => (
+              <div className="space-y-3">
+                {preparingOrders.length === 0 ? (
+                  <p className="text-center py-8 text-xs text-amber-700/60 italic">No dishes in prep</p>
+                ) : (
+                  preparingOrders.map((o) => (
                     <div
-                      key={ord.id}
-                      className="p-4 rounded-2xl border border-amber-200 bg-amber-50/30 space-y-3"
+                      key={o.id}
+                      className="bg-white rounded-2xl p-4 border border-amber-200 shadow-card hover:shadow-card-hover transition-all space-y-3"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-xs text-amber-800">
-                          Order #{ord.id}
-                        </span>
-                        <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                          Cooking (~15m)
+                        <strong className="font-mono text-xs text-brand-600">#{o.id}</strong>
+                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md flex items-center gap-1">
+                          <Flame className="w-3 h-3 text-amber-600" />
+                          Cooking (14m)
                         </span>
                       </div>
 
-                      <div className="space-y-1 text-xs">
-                        {ord.items.map((it) => (
-                          <div key={it.id} className="flex justify-between font-medium text-slate-800">
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs space-y-1">
+                        {o.items.map((i) => (
+                          <div key={i.id} className="flex justify-between text-slate-800">
                             <span>
-                              {it.quantity}x {it.menuItem.name}
+                              <strong>{i.quantity}x</strong> {i.menuItem.name}
                             </span>
-                            <span className="text-slate-500">x{it.quantity}</span>
                           </div>
                         ))}
                       </div>
 
-                      <div className="pt-2 border-t border-amber-100 flex items-center justify-between">
-                        <span className="text-[11px] text-slate-500">Packed in thermal bag</span>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                        <Bike className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Rider: {o.riderName || 'Dhaka Courier arriving'}</span>
+                      </div>
+
+                      <div className="pt-1 flex items-center gap-2">
                         <button
-                          onClick={() => handleMarkReady(ord.id)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1"
+                          onClick={() => setSelectedOrderDetails(o)}
+                          className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs"
+                          title="View Details"
                         >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Mark Ready</span>
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            updateOrderStatus(o.id, 'PICKED_UP');
+                            showToast(`Order #${o.id} packed and marked ready for pickup!`, 'success');
+                          }}
+                          className="flex-1 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs"
+                        >
+                          Mark Ready ✓
                         </button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
 
-            {/* Column 3: Ready for Rider Pickup */}
-            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-surface-200 shadow-2xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-surface-100">
+            {/* Column 3: Ready For Pickup */}
+            <div className="bg-blue-50/50 p-4 rounded-3xl border border-blue-200/60 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-blue-200">
                 <div className="flex items-center gap-2">
-                  <Bike className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-display font-bold text-sm text-slate-900">
-                    Ready for Rider Pickup
-                  </h3>
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  <h4 className="font-display font-black text-xs uppercase tracking-wider text-blue-900">
+                    3. Ready For Rider
+                  </h4>
                 </div>
-                <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-blue-200 text-blue-900 text-xs font-black">
                   {readyOrders.length}
                 </span>
               </div>
 
-              {readyOrders.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs">
-                  No orders currently waiting on pickup counter.
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {readyOrders.map((ord) => (
+              <div className="space-y-3">
+                {readyOrders.length === 0 ? (
+                  <p className="text-center py-8 text-xs text-blue-700/60 italic">No packed bags waiting</p>
+                ) : (
+                  readyOrders.map((o) => (
                     <div
-                      key={ord.id}
-                      className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/20 space-y-3"
+                      key={o.id}
+                      className="bg-white rounded-2xl p-4 border border-blue-200 shadow-card hover:shadow-card-hover transition-all space-y-3"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-xs text-emerald-800">
-                          Order #{ord.id}
-                        </span>
-                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                          Rider Arrived
+                        <strong className="font-mono text-xs text-brand-600">#{o.id}</strong>
+                        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md">
+                          Thermal Bag Packed
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-600">
-                        <p className="font-medium text-slate-900">
-                          Assigned Rider: {ord.riderName || 'Rider Rakib Hossain'}
-                        </p>
-                        <p className="text-[11px] text-slate-500">
-                          Vehicle: {ord.riderVehicle || 'Honda CG125 (Dhaka Metro-H-4421)'}
-                        </p>
+                      <div className="text-xs text-slate-800">
+                        <h5 className="font-bold">{o.customerName}</h5>
+                        <p className="text-[11px] text-slate-400">Total: ৳{o.total}</p>
                       </div>
 
-                      <div className="pt-2 border-t border-emerald-100 flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-900">
-                          {formatBDT(ord.total)}
-                        </span>
+                      <div className="bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-200 text-xs flex items-center justify-between">
+                        <div>
+                          <strong className="text-emerald-900 block text-[11px]">{o.riderName || 'Rider Arrived'}</strong>
+                          <span className="text-[10px] text-emerald-700">Waiting at pickup desk</span>
+                        </div>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      </div>
+
+                      <div className="pt-1 flex items-center gap-2">
                         <button
-                          onClick={() => handleHandoverRider(ord.id)}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs"
+                          onClick={() => setSelectedOrderDetails(o)}
+                          className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs"
+                          title="View Details"
                         >
-                          Handover to Rider
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            updateOrderStatus(o.id, 'ON_THE_WAY');
+                            showToast(`Order #${o.id} handed over to rider!`, 'success');
+                          }}
+                          className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-xs"
+                        >
+                          Handover Rider →
                         </button>
                       </div>
                     </div>
-                  ))}
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Column 4: Picked Up / En Route */}
+            <div className="bg-emerald-50/50 p-4 rounded-3xl border border-emerald-200/60 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-emerald-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <h4 className="font-display font-black text-xs uppercase tracking-wider text-emerald-900">
+                    4. En Route
+                  </h4>
                 </div>
-              )}
+                <span className="px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-900 text-xs font-black">
+                  {transitOrders.length}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {transitOrders.length === 0 ? (
+                  <p className="text-center py-8 text-xs text-emerald-700/60 italic">No orders in transit</p>
+                ) : (
+                  transitOrders.map((o) => (
+                    <div
+                      key={o.id}
+                      className="bg-white rounded-2xl p-4 border border-emerald-200 shadow-card hover:shadow-card-hover transition-all space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <strong className="font-mono text-xs text-brand-600">#{o.id}</strong>
+                        <StatusBadge status="ON_THE_WAY" size="sm" pulse />
+                      </div>
+
+                      <div>
+                        <h5 className="font-bold text-xs text-slate-900">{o.customerName}</h5>
+                        <p className="text-[11px] text-slate-500">Destination: {o.deliveryArea}</p>
+                      </div>
+
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                        <Bike className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Courier: {o.riderName}</span>
+                      </div>
+
+                      <button
+                        onClick={() => setSelectedOrderDetails(o)}
+                        className="w-full py-1.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-bold"
+                      >
+                        View Details
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Menu & Stock Availability Tab */}
-        {activeTab === 'menu' && (
-          <div className="bg-white rounded-3xl p-6 border border-surface-200 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-surface-100">
-              <div>
-                <h3 className="font-display font-bold text-base text-slate-900">
-                  Dish Stock & Real-Time Availability
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Toggle items off instantly if ingredients run out during high demand rushes.
-                </p>
-              </div>
-              <span className="text-xs font-bold text-slate-600">
-                {activeRest.menuItems.filter((m) => m.isAvailable !== false).length} / {activeRest.menuItems.length} Available
-              </span>
+      {/* 3. MENU MANAGEMENT */}
+      {activeNav === 'menu' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <div>
+              <h2 className="font-display font-black text-xl text-slate-900">
+                Menu Management: {activeRest.name}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Update dish pricing, photos, ingredients, and toggle instant stock availability
+              </p>
             </div>
+            <button
+              onClick={() => setIsAddFoodOpen(true)}
+              className="px-4 py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs hover:shadow-brand transition-all self-start sm:self-auto"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add New Dish</span>
+            </button>
+          </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {activeRest.menuItems.map((dish) => {
-                const isAvailable = dish.isAvailable !== false;
-                return (
-                  <div
-                    key={dish.id}
-                    className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                      isAvailable ? 'border-surface-200 bg-white' : 'border-rose-200 bg-rose-50/30 opacity-75'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={dish.image}
-                        alt={dish.name}
-                        className="w-12 h-12 rounded-xl object-cover border border-surface-200"
-                      />
-                      <div>
-                        <h4 className="font-bold text-xs sm:text-sm text-slate-900 leading-tight">
-                          {dish.name}
-                        </h4>
-                        <span className="font-display font-bold text-xs text-brand-600 block">
-                          {formatBDT(dish.price)}
+          <FilterBar
+            searchPlaceholder="Search dishes..."
+            searchValue={menuSearch}
+            onSearchChange={setMenuSearch}
+            activeChip={selectedMenuCategory}
+            onChipSelect={setSelectedMenuCategory}
+            filterChips={['All', ...activeRest.menuCategories].map((cat) => ({
+              id: cat,
+              label: cat,
+              count: cat === 'All' ? activeRest.menuItems.length : activeRest.menuItems.filter((m) => m.category === cat).length,
+            }))}
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {activeRest.menuItems
+              .filter((item) => {
+                const matchesSearch =
+                  !menuSearch ||
+                  item.name.toLowerCase().includes(menuSearch.toLowerCase()) ||
+                  item.bengaliName.includes(menuSearch);
+                const matchesCat = selectedMenuCategory === 'All' || item.category === selectedMenuCategory;
+                return matchesSearch && matchesCat;
+              })
+              .map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-white rounded-3xl border border-slate-100 shadow-card hover:shadow-card-hover transition-all duration-200 overflow-hidden flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="relative h-44 w-full bg-slate-100 overflow-hidden">
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                      <div className="absolute top-3 left-3">
+                        <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-white/95 backdrop-blur-xs text-slate-800 shadow-xs">
+                          {item.category}
                         </span>
+                      </div>
+                      <div className="absolute bottom-3 left-3 right-3 text-white">
+                        <h4 className="font-display font-black text-sm drop-shadow-xs">{item.name}</h4>
+                        <span className="text-[11px] font-bengali opacity-90">{item.bengaliName}</span>
                       </div>
                     </div>
 
+                    <div className="p-4 space-y-2.5">
+                      <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                        {item.description}
+                      </p>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-2">
+                          <strong className="font-black text-base text-slate-900">৳{item.price}</strong>
+                          {item.originalPrice && (
+                            <span className="line-through text-xs text-slate-400">৳{item.originalPrice}</span>
+                          )}
+                        </div>
+
+                        {/* Instant In-Stock Switch */}
+                        <button
+                          onClick={() => toggleMenuItemAvailability(activeRest.id, item.id)}
+                          className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
+                            item.isAvailable !== false
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                              : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                          }`}
+                        >
+                          {item.isAvailable !== false ? 'Available' : 'Unavailable'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 pt-0 border-t border-slate-50 flex items-center justify-end gap-2">
                     <button
-                      onClick={() => toggleMenuItemAvailability(activeRest.id, dish.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                        isAvailable
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200'
-                          : 'bg-rose-100 text-rose-700 border border-rose-300 hover:bg-emerald-50 hover:text-emerald-700'
-                      }`}
+                      onClick={() => {
+                        setConfirmDialog({
+                          isOpen: true,
+                          title: `Delete ${item.name}?`,
+                          description: `Are you sure you want to permanently remove this dish from ${activeRest.name}?`,
+                          confirmText: 'Delete Dish',
+                          isDestructive: true,
+                          onConfirm: () => {
+                            deleteMenuItem(activeRest.id, item.id);
+                            setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+                          },
+                        });
+                      }}
+                      className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                      title="Delete Dish"
                     >
-                      {isAvailable ? 'In Stock' : 'Sold Out'}
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              ))}
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Table Bookings Tab */}
-        {activeTab === 'bookings' && (
-          <div className="bg-white rounded-3xl p-6 border border-surface-200 shadow-sm space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-surface-100">
-              <div>
-                <h3 className="font-display font-bold text-base text-slate-900">
-                  Dining Room Table Reservations
-                </h3>
-                <p className="text-xs text-slate-500">Upcoming reserved guest tables for {activeRest.name}</p>
-              </div>
-            </div>
+      {/* 4. INVENTORY & STOCK TRACKING */}
+      {activeNav === 'inventory' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <h2 className="font-display font-black text-xl text-slate-900">Kitchen Pantry & Ingredient Stock</h2>
+            <p className="text-xs text-slate-500">Live portion counts and automated low-stock warnings</p>
+          </div>
 
-            {restReservations.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-xs">
-                No upcoming table reservations booked for this location yet.
+          <DataTable
+            data={inventory}
+            keyExtractor={(i) => i.id}
+            columns={[
+              {
+                header: 'Item / Dish',
+                accessor: (i) => (
+                  <div>
+                    <strong className="font-bold text-slate-900 text-xs sm:text-sm">{i.foodName}</strong>
+                    <p className="text-[11px] text-slate-400 font-bengali">{i.bengaliName}</p>
+                  </div>
+                ),
+              },
+              {
+                header: 'Category',
+                accessor: (i) => <span className="text-slate-600 font-medium">{i.category}</span>,
+              },
+              {
+                header: 'Stock Count',
+                accessor: (i) => (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={i.currentStock}
+                      onChange={(e) => updateInventoryStock(i.id, Number(e.target.value))}
+                      className="w-16 px-2 py-1 rounded-lg border border-slate-200 text-xs font-bold text-slate-800"
+                    />
+                    <span className="text-xs text-slate-500">{i.unit}</span>
+                  </div>
+                ),
+              },
+              {
+                header: 'Status',
+                accessor: (i) => <StatusBadge status={i.status} size="sm" />,
+              },
+              {
+                header: 'Last Restocked',
+                accessor: (i) => <span className="text-xs text-slate-400">{i.lastRestocked}</span>,
+              },
+            ]}
+          />
+        </div>
+      )}
+
+      {/* 5. TABLE RESERVATIONS */}
+      {activeNav === 'reservations' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <h2 className="font-display font-black text-xl text-slate-900">Dine-in Reservations</h2>
+            <p className="text-xs text-slate-500">Table booking schedule for {activeRest.name}</p>
+          </div>
+
+          <DataTable
+            data={reservations.filter((r) => r.restaurantId === activeRest.id || r.restaurantName.includes(activeRest.name))}
+            keyExtractor={(r) => r.id}
+            emptyMessage="No reservations booked yet"
+            emptySubtext="New guest table bookings will appear here."
+            columns={[
+              {
+                header: 'Pass ID',
+                accessor: (r) => <strong className="font-mono text-slate-900">#{r.id}</strong>,
+              },
+              {
+                header: 'Guest Name',
+                accessor: (r) => (
+                  <div>
+                    <strong className="text-slate-800">{r.guestName}</strong>
+                    <p className="text-[11px] text-slate-400">{r.guestPhone}</p>
+                  </div>
+                ),
+              },
+              {
+                header: 'Date & Time',
+                accessor: (r) => (
+                  <div>
+                    <span className="font-semibold text-slate-800">{r.date}</span>
+                    <p className="text-[11px] text-brand-600 font-bold">{r.time}</p>
+                  </div>
+                ),
+              },
+              {
+                header: 'Party Size',
+                accessor: (r) => <span className="font-bold text-slate-800">{r.guests} Guests</span>,
+              },
+              {
+                header: 'Seating',
+                accessor: (r) => <span className="text-xs text-slate-600">{r.seating}</span>,
+              },
+              {
+                header: 'Status',
+                accessor: (r) => <StatusBadge status={r.status} size="sm" />,
+              },
+            ]}
+          />
+        </div>
+      )}
+
+      {/* 6. CUSTOMER REVIEWS & REPLIES */}
+      {activeNav === 'reviews' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <h2 className="font-display font-black text-xl text-slate-900">Customer Feedback & Reviews</h2>
+            <p className="text-xs text-slate-500">
+              Read verified customer reviews and post official restaurant replies.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {activeRest.reviews.length === 0 ? (
+              <div className="bg-white rounded-3xl p-12 text-center text-slate-400">
+                No customer reviews yet for this branch.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                {restReservations.map((res) => (
-                  <div
-                    key={res.id}
-                    className="p-4 rounded-2xl border border-surface-200 bg-surface-50/50 space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-display font-bold text-sm text-slate-900">
-                        {res.guestName} ({res.guests} Guests)
-                      </span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                        {res.status}
-                      </span>
+              activeRest.reviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-100 shadow-card space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">{rev.userName}</h4>
+                      <p className="text-[11px] text-slate-400">{rev.date}</p>
                     </div>
-                    <div className="text-xs text-slate-600 space-y-0.5">
-                      <p>
-                        📅 Date: <strong className="text-slate-900">{res.date}</strong> at{' '}
-                        <strong className="text-slate-900">{res.time}</strong>
-                      </p>
-                      <p>🪑 Seating Preference: {res.seating}</p>
-                      <p>📞 Phone: {res.guestPhone}</p>
-                      {res.specialRequest && (
-                        <p className="italic text-slate-500">Note: "{res.specialRequest}"</p>
-                      )}
+                    <div className="flex items-center gap-1 text-amber-500">
+                      {[...Array(5)].map((_, i) => (
+                        <Star
+                          key={i}
+                          className={`w-3.5 h-3.5 ${
+                            i < rev.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'
+                          }`}
+                        />
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                    "{rev.comment}"
+                  </p>
+
+                  {/* Existing Reply if any */}
+                  {rev.reply && (
+                    <div className="bg-brand-50/70 p-3 rounded-xl border border-brand-100 text-xs text-brand-900 space-y-1">
+                      <strong>Owner Response:</strong>
+                      <p className="text-brand-800">{rev.reply}</p>
+                    </div>
+                  )}
+
+                  <div className="pt-1 flex items-center justify-end">
+                    <button
+                      onClick={() =>
+                        setActiveReplyReview({
+                          id: rev.id,
+                          name: rev.userName,
+                          comment: rev.comment,
+                        })
+                      }
+                      className="px-4 py-1.5 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold transition-all"
+                    >
+                      {rev.reply ? 'Edit Reply' : 'Reply as Restaurant'}
+                    </button>
+                  </div>
+                </div>
+              ))
             )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+
+      {/* 7. OUTLET PROFILE & LIVE CUSTOMER APP PREVIEW */}
+      {activeNav === 'profile' && (
+        <div className="space-y-6 animate-in fade-in duration-150">
+          <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-card">
+            <h2 className="font-display font-black text-xl text-slate-900">Outlet Profile & Live Preview</h2>
+            <p className="text-xs text-slate-500">
+              Preview how {activeRest.name} appears to foodies on the KHABAR Customer App
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left: Edit Info */}
+            <div className="lg:col-span-6 bg-white rounded-3xl p-6 border border-slate-100 shadow-card space-y-4">
+              <h3 className="font-display font-black text-lg text-slate-900">Restaurant Information</h3>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Outlet Name</label>
+                  <input
+                    type="text"
+                    defaultValue={activeRest.name}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-slate-800 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Bengali Name</label>
+                  <input
+                    type="text"
+                    defaultValue={activeRest.bengaliName}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-slate-800 font-bengali"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Address</label>
+                  <input
+                    type="text"
+                    defaultValue={activeRest.address}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Opening Hours</label>
+                  <input
+                    type="text"
+                    defaultValue={activeRest.openingHours}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Cuisines</label>
+                  <input
+                    type="text"
+                    defaultValue={activeRest.cuisine.join(', ')}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-slate-800"
+                  />
+                </div>
+                <div className="pt-2">
+                  <button
+                    onClick={() => showToast('Restaurant profile saved!', 'success')}
+                    className="w-full py-2.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition-all shadow-xs"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Live Customer Card Simulation */}
+            <div className="lg:col-span-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand-600" />
+                <h4 className="font-display font-black text-sm text-slate-800">
+                  Live Customer Experience Preview
+                </h4>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl overflow-hidden">
+                <div className="relative h-48 w-full bg-slate-100">
+                  <img src={activeRest.coverImage} alt={activeRest.name} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                  <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                    <span className="px-2.5 py-1 rounded-full bg-white/95 text-slate-900 text-xs font-bold shadow-xs">
+                      ★ {activeRest.rating}
+                    </span>
+                  </div>
+                  <div className="absolute bottom-3 left-4 flex items-center gap-3 text-white">
+                    <img
+                      src={activeRest.logo}
+                      alt={activeRest.name}
+                      className="w-12 h-12 rounded-xl object-cover border-2 border-white shadow-xs"
+                    />
+                    <div>
+                      <h4 className="font-display font-black text-lg drop-shadow-xs">{activeRest.name}</h4>
+                      <p className="text-xs opacity-90">{activeRest.cuisine.join(' • ')}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-3">
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      {activeRest.deliveryTime}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Bike className="w-3.5 h-3.5 text-slate-400" />
+                      Delivery: ৳{activeRest.deliveryFee}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                      {activeRest.distance}
+                    </span>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100">
+                    <h5 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-2">
+                      Menu Preview
+                    </h5>
+                    <div className="space-y-2">
+                      {activeRest.menuItems.slice(0, 3).map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 text-xs">
+                          <span className="font-bold text-slate-800">{item.name}</span>
+                          <strong className="text-slate-900">৳{item.price}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODALS */}
+      <OrderDetailsModal
+        order={selectedOrderDetails}
+        onClose={() => setSelectedOrderDetails(null)}
+        onAdvanceStatus={(orderId) => {
+          const current = orders.find((o) => o.id === orderId);
+          if (current) {
+            const nextStatus: OrderRecord['status'] =
+              current.status === 'PLACED' || current.status === 'CONFIRMED'
+                ? 'PREPARING'
+                : current.status === 'PREPARING'
+                ? 'PICKED_UP'
+                : 'ON_THE_WAY';
+            updateOrderStatus(orderId, nextStatus);
+            showToast(`Advanced Order #${orderId} to ${nextStatus}`, 'success');
+          }
+        }}
+      />
+
+      <AddFoodModal
+        isOpen={isAddFoodOpen}
+        onClose={() => setIsAddFoodOpen(false)}
+        restaurantId={activeRest.id}
+        restaurantName={activeRest.name}
+        onSubmit={(dish) => addMenuItem(activeRest.id, dish)}
+      />
+
+      <ReplyReviewModal
+        isOpen={!!activeReplyReview}
+        onClose={() => setActiveReplyReview(null)}
+        reviewId={activeReplyReview?.id || ''}
+        customerName={activeReplyReview?.name || ''}
+        comment={activeReplyReview?.comment || ''}
+        onReply={(revId, text) => replyToReview(activeRest.id, revId, text)}
+      />
+
+      <ConfirmationDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        confirmText={confirmDialog.confirmText}
+        isDestructive={confirmDialog.isDestructive}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
+    </AppShell>
   );
 };

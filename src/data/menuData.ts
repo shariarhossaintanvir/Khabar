@@ -556,6 +556,8 @@ export interface RestaurantReview {
   date: string;
   comment: string;
   accolade?: string;
+  reply?: string;
+  repliedAt?: string;
 }
 
 export const RESTAURANT_REVIEWS: RestaurantReview[] = [

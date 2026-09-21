@@ -1,6 +1,30 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import type { LocationItem, Restaurant, MenuItem, AddOnOption, PromoCoupon, SavedAddress, DealItem } from '../data/khabarData';
-import { BANGLADESH_LOCATIONS, RESTAURANTS, PROMO_COUPONS, DEMO_ADDRESSES, BEST_DEALS } from '../data/khabarData';
+import type {
+  LocationItem,
+  Restaurant,
+  MenuItem,
+  AddOnOption,
+  PromoCoupon,
+  SavedAddress,
+  DealItem,
+  PendingRestaurant,
+  RiderProfile,
+  PaymentTransaction,
+  InventoryItem,
+  RiderDeliveryRecord,
+} from '../data/khabarData';
+import {
+  BANGLADESH_LOCATIONS,
+  RESTAURANTS,
+  PROMO_COUPONS,
+  DEMO_ADDRESSES,
+  BEST_DEALS,
+  DEMO_PENDING_RESTAURANTS,
+  DEMO_RIDERS,
+  DEMO_TRANSACTIONS,
+  DEMO_INVENTORY,
+  DEMO_RIDER_DELIVERIES,
+} from '../data/khabarData';
 import { TRANSLATIONS, type Language, type TranslationStrings } from '../data/translations';
 
 export type KhabarView =
@@ -262,6 +286,54 @@ interface KhabarContextType {
 
   // Currency & Formats
   formatBDT: (amount: number) => string;
+
+  // Admin Ecosystem
+  pendingRestaurants: PendingRestaurant[];
+  approveRestaurant: (id: string) => void;
+  rejectRestaurant: (id: string, reason?: string) => void;
+  requestChangesRestaurant: (id: string, notes: string) => void;
+  addRestaurant: (rest: Omit<Restaurant, 'id'>) => void;
+  updateRestaurant: (id: string, updates: Partial<Restaurant>) => void;
+  deleteRestaurant: (id: string) => void;
+
+  // Food & Menu Management
+  addMenuItem: (restaurantId: string, item: Omit<MenuItem, 'id'>) => void;
+  updateMenuItem: (restaurantId: string, itemId: string, updates: Partial<MenuItem>) => void;
+  deleteMenuItem: (restaurantId: string, itemId: string) => void;
+
+  // Offers & Coupons
+  coupons: PromoCoupon[];
+  createCoupon: (coupon: PromoCoupon) => void;
+  deleteCoupon: (code: string) => void;
+
+  // Payments & Finance
+  transactions: PaymentTransaction[];
+  refundTransaction: (transactionId: string, reason: string) => void;
+
+  // Riders & Fleet
+  riders: RiderProfile[];
+  updateRiderStatus: (riderId: string, status: RiderProfile['status']) => void;
+  assignRiderToOrder: (orderId: string, riderName: string, riderPhone: string) => void;
+
+  // Restaurant Partner Operations
+  activePartnerRestaurantId: string;
+  setActivePartnerRestaurantId: (id: string) => void;
+  inventory: InventoryItem[];
+  updateInventoryStock: (itemId: string, currentStock: number) => void;
+  replyToReview: (restaurantId: string, reviewId: string, replyText: string) => void;
+
+  // Rider Courier Operations
+  riderOnline: boolean;
+  setRiderOnline: (online: boolean) => void;
+  incomingDelivery: OrderRecord | null;
+  setIncomingDelivery: (order: OrderRecord | null) => void;
+  acceptDelivery: (orderId: string) => void;
+  declineDelivery: (orderId: string) => void;
+  activeRiderStep: number;
+  setActiveRiderStep: (step: number) => void;
+  completeDeliveryWithOTP: (orderId: string, otp: string) => boolean;
+  riderDeliveries: RiderDeliveryRecord[];
+  walletBalance: number;
 }
 
 const KhabarContext = createContext<KhabarContextType | undefined>(undefined);
@@ -943,6 +1015,281 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const isRestaurantFavorited = (id: string) => favoriteRestaurantIds.includes(id);
 
+  // =========================================================================
+  // ADMIN ECOSYSTEM STATE & ACTIONS
+  // =========================================================================
+  const [pendingRestaurants, setPendingRestaurants] = useState<PendingRestaurant[]>(DEMO_PENDING_RESTAURANTS);
+  const [coupons, setCoupons] = useState<PromoCoupon[]>(PROMO_COUPONS);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>(DEMO_TRANSACTIONS);
+  const [riders, setRiders] = useState<RiderProfile[]>(DEMO_RIDERS);
+
+  const approveRestaurant = (id: string) => {
+    const target = pendingRestaurants.find((p) => p.id === id);
+    if (!target) return;
+
+    setPendingRestaurants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, status: 'APPROVED' } : p))
+    );
+
+    const newRestId = `rest-appr-${Date.now()}`;
+    const newRest: Restaurant = {
+      id: newRestId,
+      name: target.name,
+      bengaliName: target.bengaliName,
+      logo: target.logo,
+      coverImage: target.coverImage,
+      rating: 4.8,
+      reviewsCount: 1,
+      cuisine: target.cuisine,
+      deliveryFee: 50,
+      deliveryTime: '25–35 min',
+      distance: '1.5 km',
+      minimumOrder: 150,
+      address: target.address,
+      openingHours: '11:00 AM – 11:00 PM',
+      aboutText: `Authentic ${target.cuisine.join(', ')} served fresh at ${target.name}.`,
+      isOpen: true,
+      isFeatured: true,
+      menuCategories: ['Featured', 'Specials'],
+      menuItems: [
+        {
+          id: `dish-sample-${Date.now()}`,
+          name: `${target.name} Signature Platter`,
+          bengaliName: 'সিগনেচার প্ল্যাটার',
+          description: 'House specialty prepared fresh with premium authentic spices and ingredients.',
+          price: 480,
+          image: target.coverImage,
+          category: 'Specials',
+          isPopular: true,
+          isAvailable: true,
+          restaurantId: newRestId,
+          restaurantName: target.name,
+        },
+      ],
+      reviews: [],
+    };
+
+    setRestaurants((prev) => [newRest, ...prev]);
+    showToast(`Approved ${target.name}! It is now active on the KHABAR platform.`, 'success');
+  };
+
+  const rejectRestaurant = (id: string, reason?: string) => {
+    setPendingRestaurants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, status: 'REJECTED', notes: reason || 'Application rejected by administration.' } : p))
+    );
+    showToast('Restaurant application rejected.', 'info');
+  };
+
+  const requestChangesRestaurant = (id: string, notes: string) => {
+    setPendingRestaurants((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, status: 'NEEDS_CHANGES', notes } : p))
+    );
+    showToast('Requested changes sent to restaurant applicant.', 'info');
+  };
+
+  const addRestaurant = (restData: Omit<Restaurant, 'id'>) => {
+    const newRest: Restaurant = {
+      ...restData,
+      id: `rest-${Date.now()}`,
+    };
+    setRestaurants((prev) => [newRest, ...prev]);
+    showToast(`Added ${newRest.name} to KHABAR!`, 'success');
+  };
+
+  const updateRestaurant = (id: string, updates: Partial<Restaurant>) => {
+    setRestaurants((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+    showToast('Restaurant details updated.', 'success');
+  };
+
+  const deleteRestaurant = (id: string) => {
+    setRestaurants((prev) => prev.filter((r) => r.id !== id));
+    showToast('Restaurant removed from platform.', 'info');
+  };
+
+  const addMenuItem = (restaurantId: string, itemData: Omit<MenuItem, 'id'>) => {
+    const targetRest = restaurants.find((r) => r.id === restaurantId);
+    const newItem: MenuItem = {
+      ...itemData,
+      id: `item-${Date.now()}`,
+      restaurantId,
+      restaurantName: targetRest?.name || 'Restaurant',
+      isAvailable: true,
+    };
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id !== restaurantId) return r;
+        const exists = r.menuCategories.includes(newItem.category);
+        return {
+          ...r,
+          menuCategories: exists ? r.menuCategories : [...r.menuCategories, newItem.category],
+          menuItems: [newItem, ...r.menuItems],
+        };
+      })
+    );
+    showToast(`Added ${newItem.name} to menu!`, 'success');
+  };
+
+  const updateMenuItem = (restaurantId: string, itemId: string, updates: Partial<MenuItem>) => {
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id !== restaurantId) return r;
+        return {
+          ...r,
+          menuItems: r.menuItems.map((item) =>
+            item.id === itemId ? { ...item, ...updates } : item
+          ),
+        };
+      })
+    );
+    showToast('Menu item updated successfully.', 'success');
+  };
+
+  const deleteMenuItem = (restaurantId: string, itemId: string) => {
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id !== restaurantId) return r;
+        return {
+          ...r,
+          menuItems: r.menuItems.filter((item) => item.id !== itemId),
+        };
+      })
+    );
+    showToast('Menu item deleted.', 'info');
+  };
+
+  const createCoupon = (newCoupon: PromoCoupon) => {
+    setCoupons((prev) => [newCoupon, ...prev]);
+    showToast(`Coupon ${newCoupon.code} published!`, 'success');
+  };
+
+  const deleteCoupon = (code: string) => {
+    setCoupons((prev) => prev.filter((c) => c.code !== code));
+    showToast('Coupon removed.', 'info');
+  };
+
+  const refundTransaction = (transactionId: string, reason: string) => {
+    setTransactions((prev) =>
+      prev.map((txn) =>
+        txn.id === transactionId
+          ? { ...txn, status: 'REFUNDED', refundReason: reason }
+          : txn
+      )
+    );
+    showToast(`Transaction ${transactionId} refunded successfully.`, 'success');
+  };
+
+  const updateRiderStatus = (riderId: string, status: RiderProfile['status']) => {
+    setRiders((prev) =>
+      prev.map((r) => (r.id === riderId ? { ...r, status } : r))
+    );
+    showToast(`Rider status updated to ${status}.`, 'info');
+  };
+
+  const assignRiderToOrder = (orderId: string, riderName: string, riderPhone: string) => {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? { ...o, riderName, riderPhone, status: o.status === 'PLACED' ? 'PREPARING' : o.status }
+          : o
+      )
+    );
+    showToast(`Assigned ${riderName} to Order #${orderId}`, 'success');
+  };
+
+  // =========================================================================
+  // RESTAURANT PARTNER STATE & ACTIONS
+  // =========================================================================
+  const [activePartnerRestaurantId, setActivePartnerRestaurantId] = useState<string>(
+    restaurants[0]?.id || 'rest-1'
+  );
+  const [inventory, setInventory] = useState<InventoryItem[]>(DEMO_INVENTORY);
+
+  const updateInventoryStock = (itemId: string, currentStock: number) => {
+    setInventory((prev) =>
+      prev.map((item) => {
+        if (item.id !== itemId) return item;
+        let status: InventoryItem['status'] = 'IN_STOCK';
+        if (currentStock <= 0) status = 'OUT_OF_STOCK';
+        else if (currentStock <= item.lowStockThreshold) status = 'LOW_STOCK';
+        return { ...item, currentStock, status, lastRestocked: 'Just now' };
+      })
+    );
+    showToast('Inventory stock updated.', 'info');
+  };
+
+  const replyToReview = (restaurantId: string, reviewId: string, replyText: string) => {
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id !== restaurantId) return r;
+        return {
+          ...r,
+          reviews: r.reviews.map((rev) =>
+            rev.id === reviewId ? { ...rev, reply: replyText } : rev
+          ),
+        };
+      })
+    );
+    showToast('Reply posted to customer review.', 'success');
+  };
+
+  // =========================================================================
+  // RIDER COURIER STATE & ACTIONS
+  // =========================================================================
+  const [riderOnline, setRiderOnline] = useState<boolean>(true);
+  const [incomingDelivery, setIncomingDelivery] = useState<OrderRecord | null>(orders[0] || null);
+  const [activeRiderStep, setActiveRiderStep] = useState<number>(1);
+  const [riderDeliveries, setRiderDeliveries] = useState<RiderDeliveryRecord[]>(DEMO_RIDER_DELIVERIES);
+  const [walletBalance, setWalletBalance] = useState<number>(3450);
+
+  const acceptDelivery = (orderId: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId) || orders[0];
+    if (targetOrder) {
+      updateOrderStatus(targetOrder.id, 'PICKED_UP');
+      setActiveTrackingOrder(targetOrder);
+      setActiveRiderStep(1);
+      setIncomingDelivery(null);
+      showToast(`Accepted Delivery #${targetOrder.id}! Navigate to restaurant.`, 'success');
+    }
+  };
+
+  const declineDelivery = (orderId: string) => {
+    setIncomingDelivery(null);
+    showToast(`Declined delivery request #${orderId}.`, 'info');
+  };
+
+  const completeDeliveryWithOTP = (orderId: string, otp: string): boolean => {
+    if (!otp || otp.length < 4) {
+      showToast('Please enter a valid 4-digit customer OTP.', 'error');
+      return false;
+    }
+
+    updateOrderStatus(orderId, 'DELIVERED');
+    setWalletBalance((prev) => prev + 120);
+
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const newRecord: RiderDeliveryRecord = {
+      id: `trip-${Date.now()}`,
+      orderId,
+      restaurantName: targetOrder?.restaurantName || "Sultan's Dine",
+      pickupArea: 'Dhanmondi 8A',
+      dropArea: targetOrder?.deliveryArea || 'Dhanmondi',
+      fareEarned: 80,
+      tip: 20,
+      bonus: 20,
+      distanceKm: 1.8,
+      durationMin: 18,
+      completedAt: 'Just now',
+      status: 'COMPLETED',
+      customerRating: 5,
+    };
+
+    setRiderDeliveries((prev) => [newRecord, ...prev]);
+    showToast(`Order #${orderId} delivered! ৳120 payout credited to wallet.`, 'success');
+    return true;
+  };
+
   return (
     <KhabarContext.Provider
       value={{
@@ -1034,6 +1381,46 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         toast,
         showToast,
         formatBDT,
+
+        // Admin Ecosystem
+        pendingRestaurants,
+        approveRestaurant,
+        rejectRestaurant,
+        requestChangesRestaurant,
+        addRestaurant,
+        updateRestaurant,
+        deleteRestaurant,
+        addMenuItem,
+        updateMenuItem,
+        deleteMenuItem,
+        coupons,
+        createCoupon,
+        deleteCoupon,
+        transactions,
+        refundTransaction,
+        riders,
+        updateRiderStatus,
+        assignRiderToOrder,
+
+        // Restaurant Partner Operations
+        activePartnerRestaurantId,
+        setActivePartnerRestaurantId,
+        inventory,
+        updateInventoryStock,
+        replyToReview,
+
+        // Rider Courier Operations
+        riderOnline,
+        setRiderOnline,
+        incomingDelivery,
+        setIncomingDelivery,
+        acceptDelivery,
+        declineDelivery,
+        activeRiderStep,
+        setActiveRiderStep,
+        completeDeliveryWithOTP,
+        riderDeliveries,
+        walletBalance,
       }}
     >
       {children}
