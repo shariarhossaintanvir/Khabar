@@ -1,0 +1,136 @@
+# ==============================================================================
+# KHABAR — Production Security & Environment Git Ignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. SECURITY & SENSITIVE CREDENTIALS (NEVER COMMIT TO GITHUB)
+# ------------------------------------------------------------------------------
+# Environment variable files containing secrets, API keys, and tokens
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+.env.*
+!.env.example
+
+# Private keys, certificates, and auth credentials
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.cer
+*.der
+*.keystore
+*.jks
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# Cloud & Service provider secrets
+credentials.json
+client_secret*.json
+service-account*.json
+*.publishsettings
+google-services.json
+GoogleService-Info.plist
+
+# ------------------------------------------------------------------------------
+# 2. DEPENDENCIES & PACKAGE MANAGERS
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnp/
+.pnp.js
+
+# ------------------------------------------------------------------------------
+# 3. PRODUCTION BUILDS & COMPILER OUTPUTS
+# ------------------------------------------------------------------------------
+dist/
+dist-ssr/
+build/
+out/
+.next/
+*.tsbuildinfo
+.vite/
+
+# ------------------------------------------------------------------------------
+# 4. LOGS & SYSTEM RUNTIME
+# ------------------------------------------------------------------------------
+logs/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# ------------------------------------------------------------------------------
+# 5. TESTING, COVERAGE & PLAYWRIGHT ARTIFACTS
+# ------------------------------------------------------------------------------
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+.playwright/
+
+# ------------------------------------------------------------------------------
+# 6. OPERATING SYSTEM & METADATA
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+
+# ------------------------------------------------------------------------------
+# 7. IDE & CODE EDITORS
+# ------------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swo
+*.swn
+*.bak
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# ------------------------------------------------------------------------------
+# 8. TEMPORARY & CACHE DIRECTORIES
+# ------------------------------------------------------------------------------
+.cache/
+.tmp/
+.temp/
+*.tmp
+.eslintcache
+.stylelintcache
