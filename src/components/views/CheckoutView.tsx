@@ -33,6 +33,7 @@ export const CheckoutView: React.FC = () => {
     savedAddresses,
     user,
     t,
+    showToast,
   } = useKhabar();
 
   // Form states
@@ -85,8 +86,8 @@ export const CheckoutView: React.FC = () => {
 
   const handleSubmitOrder = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName || !customerPhone || !deliveryAddress) {
-      alert('Please fill in your name, contact phone, and delivery address.');
+    if (!customerName.trim() || !customerPhone.trim() || !deliveryAddress.trim()) {
+      showToast('Please fill in your recipient name, contact phone, and delivery address.', 'error');
       return;
     }
 

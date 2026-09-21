@@ -279,7 +279,7 @@ export const OrderTrackingView: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  alert(`Calling delivery rider: ${order.riderPhone || '+880 1819-223344'}`);
+                  showToast(`Connecting call to courier ${order.riderName || 'Md. Rahim Uddin'}: ${order.riderPhone || '+880 1819-223344'}...`, 'info');
                 }}
                 className="p-3 rounded-full bg-brand-50 text-brand-600 hover:bg-brand-100 transition-colors shadow-2xs"
                 title="Call Rider"

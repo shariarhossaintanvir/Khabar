@@ -4,7 +4,7 @@ import { useKhabar } from '../../context/KhabarContext';
 import { RESTAURANTS } from '../../data/khabarData';
 
 export const ReservationView: React.FC = () => {
-  const { reservations, makeReservation, cancelReservation, formatBDT, navigateTo } = useKhabar();
+  const { reservations, makeReservation, cancelReservation, formatBDT, navigateTo, showToast } = useKhabar();
 
   const [restaurantId, setRestaurantId] = useState(RESTAURANTS[0].id);
   const [date, setDate] = useState('2026-09-26');
@@ -20,7 +20,7 @@ export const ReservationView: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!guestName.trim() || !guestPhone.trim()) {
-      alert('Please enter your name and mobile number.');
+      showToast('Please enter your name and mobile number for the reservation.', 'error');
       return;
     }
 
@@ -35,6 +35,7 @@ export const ReservationView: React.FC = () => {
       specialRequest,
     });
     setJustBooked(res);
+    showToast(`Dawat table reserved successfully! Booking ID: ${res.id}`, 'success');
   };
 
   const seatingOptions: { id: 'Indoor AC' | 'Outdoor Terrace' | 'Private Dining'; desc: string }[] = [
@@ -238,11 +239,17 @@ export const ReservationView: React.FC = () => {
         )}
 
         {/* Existing Reservations History */}
-        {reservations.length > 0 && (
-          <div className="space-y-4">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
             <h3 className="font-display font-bold text-lg text-slate-900">
-              Your Booked Reservations
+              Your Booked Reservations ({reservations.length})
             </h3>
+            {reservations.length > 0 && (
+              <span className="text-xs text-slate-500 font-medium">Show pass at the reception</span>
+            )}
+          </div>
+
+          {reservations.length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {reservations.map((res) => (
                 <div
@@ -254,7 +261,15 @@ export const ReservationView: React.FC = () => {
                       <span className="font-display font-bold text-sm text-slate-900">
                         {res.restaurantName}
                       </span>
-                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          res.status === 'CONFIRMED'
+                            ? 'text-emerald-700 bg-emerald-50'
+                            : res.status === 'CANCELLED'
+                            ? 'text-rose-700 bg-rose-50'
+                            : 'text-slate-700 bg-slate-100'
+                        }`}
+                      >
                         {res.status}
                       </span>
                     </div>
@@ -268,20 +283,33 @@ export const ReservationView: React.FC = () => {
 
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                     <span className="font-mono text-slate-500">Pass: {res.id}</span>
-                    {res.status === 'CONFIRMED' && (
+                    {res.status === 'CONFIRMED' ? (
                       <button
-                        onClick={() => cancelReservation(res.id)}
-                        className="text-rose-600 hover:text-rose-700 font-semibold"
+                        onClick={() => {
+                          cancelReservation(res.id);
+                          showToast(`Reservation #${res.id} has been cancelled.`, 'info');
+                        }}
+                        className="text-rose-600 hover:text-rose-700 font-semibold transition-colors"
                       >
-                        Cancel
+                        Cancel Booking
                       </button>
+                    ) : (
+                      <span className="text-slate-400 text-[11px]">No actions available</span>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="p-8 rounded-3xl bg-white border border-dashed border-slate-200 text-center space-y-2">
+              <Utensils className="w-8 h-8 text-slate-300 mx-auto" />
+              <p className="font-display font-bold text-sm text-slate-700">No Active Reservations</p>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Fill the booking form above to reserve a VIP dawat table at top restaurants in Dhaka with zero waiting queue.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

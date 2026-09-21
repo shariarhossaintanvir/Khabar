@@ -685,15 +685,67 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsReviewModalOpen(true);
   };
 
-  const submitReview = (rating: number, comment: string) => {
+  const submitReview = (
+    rating: number,
+    comment: string,
+    foodQuality = 5,
+    delivery = 5,
+    packaging = 5,
+    value = 5
+  ) => {
     if (!reviewOrderTarget) return;
+
+    const newRev = {
+      id: `rev-${Date.now()}`,
+      userName: reviewOrderTarget.customerName || user.name || 'Verified Foodie',
+      rating,
+      date: 'Today',
+      comment: comment.trim() || 'Food was delicious, freshly prepared and delivered warm!',
+      foodQualityRating: foodQuality,
+      deliveryRating: delivery,
+      packagingRating: packaging,
+      valueRating: value,
+    };
+
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id === reviewOrderTarget.restaurantId) {
+          const updatedReviews = [newRev, ...r.reviews];
+          const newAvg = Number(
+            (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
+          );
+          return {
+            ...r,
+            rating: newAvg,
+            reviewsCount: r.reviewsCount + 1,
+            reviews: updatedReviews,
+          };
+        }
+        return r;
+      })
+    );
+
+    setActiveRestaurant((prev) => {
+      if (!prev || prev.id !== reviewOrderTarget.restaurantId) return prev;
+      const updatedReviews = [newRev, ...prev.reviews];
+      const newAvg = Number(
+        (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
+      );
+      return {
+        ...prev,
+        rating: newAvg,
+        reviewsCount: prev.reviewsCount + 1,
+        reviews: updatedReviews,
+      };
+    });
+
     setOrders((prev) =>
       prev.map((o) =>
         o.id === reviewOrderTarget.id ? { ...o, rating, hasReview: true } : o
       )
     );
     setIsReviewModalOpen(false);
-    showToast('Thank you for reviewing your meal! 50 KHABAR points added.');
+    showToast('Thank you for reviewing your meal! 50 KHABAR points added.', 'success');
   };
 
   // Toast
@@ -1226,11 +1278,20 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         return {
           ...r,
           reviews: r.reviews.map((rev) =>
-            rev.id === reviewId ? { ...rev, reply: replyText } : rev
+            rev.id === reviewId ? { ...rev, reply: replyText, repliedAt: 'Just now' } : rev
           ),
         };
       })
     );
+    setActiveRestaurant((prev) => {
+      if (!prev || prev.id !== restaurantId) return prev;
+      return {
+        ...prev,
+        reviews: prev.reviews.map((rev) =>
+          rev.id === reviewId ? { ...rev, reply: replyText, repliedAt: 'Just now' } : rev
+        ),
+      };
+    });
     showToast('Reply posted to customer review.', 'success');
   };
 

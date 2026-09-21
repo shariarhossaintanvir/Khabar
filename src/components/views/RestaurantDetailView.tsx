@@ -66,6 +66,9 @@ export const RestaurantDetailView: React.FC = () => {
               src={restaurant.coverImage}
               alt={restaurant.name}
               className="w-full h-full object-cover"
+              onError={(e) => {
+                e.currentTarget.src = 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&auto=format&fit=crop&q=80';
+              }}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
@@ -284,6 +287,9 @@ export const RestaurantDetailView: React.FC = () => {
                     src={item.image}
                     alt={item.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    onError={(e) => {
+                      e.currentTarget.src = 'https://images.unsplash.com/photo-1544025162-d76694265947?w=500&auto=format&fit=crop&q=80';
+                    }}
                   />
                   <button
                     onClick={(e) => {
@@ -388,6 +394,20 @@ export const RestaurantDetailView: React.FC = () => {
                   <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
                     &ldquo;{rev.comment}&rdquo;
                   </p>
+
+                  {rev.reply && (
+                    <div className="mt-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200/60 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 flex items-center gap-1.5 text-[11px]">
+                          <MessageSquare className="w-3.5 h-3.5 text-brand-600" /> Response from {restaurant.name}
+                        </span>
+                        {rev.repliedAt && <span className="text-[10px] text-slate-400">{rev.repliedAt}</span>}
+                      </div>
+                      <p className="text-slate-600 italic text-[11px]">
+                        &ldquo;{rev.reply}&rdquo;
+                      </p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
