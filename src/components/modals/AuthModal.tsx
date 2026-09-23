@@ -1,50 +1,116 @@
 import React, { useState } from 'react';
-import { X, Smartphone, Mail, Lock, User, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { X, Smartphone, Mail, Lock, User, ArrowRight, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useKhabar } from '../../context/KhabarContext';
 
 export const AuthModal: React.FC = () => {
-  const { isAuthModalOpen, setIsAuthModalOpen, authMode, setAuthMode, loginUser, showToast } = useKhabar();
+  const {
+    isAuthModalOpen,
+    setIsAuthModalOpen,
+    authMode,
+    setAuthMode,
+    loginWithPassword,
+    registerCustomer,
+    requestOTP,
+    verifyOTP,
+    showToast,
+  } = useKhabar();
 
-  const [identifier, setIdentifier] = useState('01712345678');
-  const [password, setPassword] = useState('khabar123');
+  const [identifier, setIdentifier] = useState('tanvir@khabar.com');
+  const [password, setPassword] = useState('Khabar@2026');
   const [name, setName] = useState('Tanvir Ahmed');
   const [otpCode, setOtpCode] = useState(['', '', '', '']);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isAuthModalOpen) return null;
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier.trim()) {
-      showToast('Please enter your mobile number or email', 'error');
+    setErrorMessage(null);
+
+    if (!identifier.trim() || !password.trim()) {
+      setErrorMessage('Please enter your email or mobile number, and password.');
       return;
     }
+
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      loginUser(identifier, name || 'Tanvir Ahmed');
-    }, 600);
+    const result = await loginWithPassword(identifier, password);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      showToast(`Welcome back, ${result.user?.name}!`);
+      setIsAuthModalOpen(false);
+    } else {
+      setErrorMessage(result.error || 'Invalid credentials.');
+    }
+  };
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    if (!name.trim() || !identifier.trim() || !password.trim()) {
+      setErrorMessage('All fields are required.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const result = await registerCustomer(name, identifier, password);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      showToast('Account created successfully! Welcome to KHABAR.');
+      setIsAuthModalOpen(false);
+    } else {
+      setErrorMessage(result.error || 'Registration failed.');
+    }
   };
 
   const handleSendOtp = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+
     if (!identifier.trim()) {
-      showToast('Please enter your phone number to receive OTP', 'error');
+      setErrorMessage('Please enter your mobile number or email to receive OTP.');
       return;
     }
+
+    const res = requestOTP(identifier);
+    if (!res.success) {
+      setErrorMessage(res.error || 'Failed to send verification code.');
+      return;
+    }
+
     setAuthMode('otp');
-    showToast(`Verification code sent to ${identifier} (Code: 2 0 2 6)`);
-    setOtpCode(['2', '0', '2', '6']);
+    if (res.otpPreview) {
+      const digits = res.otpPreview.split('');
+      setOtpCode(digits);
+      showToast(`Verification code sent to ${identifier} (Code: ${digits.join(' ')})`, 'success');
+    } else {
+      showToast(res.message || `Verification code sent to ${identifier}`);
+    }
   };
 
   const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+    const fullOtp = otpCode.join('');
+
+    if (fullOtp.length !== 4) {
+      setErrorMessage('Please enter the complete 4-digit code.');
+      return;
+    }
+
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      loginUser(identifier, name || 'Tanvir Ahmed');
-      showToast('Mobile verified successfully!');
-    }, 600);
+    const result = verifyOTP(identifier, fullOtp);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      showToast('Mobile verified successfully! Welcome to KHABAR.');
+      setIsAuthModalOpen(false);
+    } else {
+      setErrorMessage(result.error || 'Verification failed. Please check the code.');
+    }
   };
 
   return (
@@ -63,7 +129,7 @@ export const AuthModal: React.FC = () => {
                 {authMode === 'otp' && 'Enter Verification Code'}
               </h3>
               <p className="text-xs text-slate-500">
-                {authMode === 'login' && 'Log in to track orders, earn points & save addresses'}
+                {authMode === 'login' && 'Log in with verified PBKDF2 hashed credentials'}
                 {authMode === 'signup' && 'Sign up in 30 seconds to enjoy 20% OFF first order'}
                 {authMode === 'otp' && `Sent 4-digit OTP to ${identifier}`}
               </p>
@@ -79,6 +145,13 @@ export const AuthModal: React.FC = () => {
 
         {/* Content Body */}
         <div className="p-6 space-y-4">
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           {authMode === 'login' && (
             <form onSubmit={handleLogin} className="space-y-3.5">
               <div>
@@ -94,7 +167,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder="e.g. 01712-345678 or you@email.com"
+                    placeholder="e.g. tanvir@khabar.com or 01712-345678"
                     className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
@@ -105,7 +178,7 @@ export const AuthModal: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-700">Password</label>
                   <button
                     type="button"
-                    onClick={() => showToast('Demo password reset link sent to your phone')}
+                    onClick={() => showToast('Password reset link sent to registered email.', 'info')}
                     className="text-[11px] font-semibold text-brand-600 hover:underline"
                   >
                     Forgot Password?
@@ -120,7 +193,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="••••••••••••"
                     className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                   />
                 </div>
@@ -131,7 +204,7 @@ export const AuthModal: React.FC = () => {
                 disabled={isSubmitting}
                 className="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
               >
-                <span>{isSubmitting ? 'Verifying...' : 'Log In to KHABAR'}</span>
+                <span>{isSubmitting ? 'Verifying Credentials...' : 'Log In to KHABAR'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -140,7 +213,7 @@ export const AuthModal: React.FC = () => {
                   <div className="w-full border-t border-slate-200" />
                 </div>
                 <span className="relative bg-white px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Or Instant Login
+                  Or One-Time Code
                 </span>
               </div>
 
@@ -150,26 +223,17 @@ export const AuthModal: React.FC = () => {
                 className="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs transition-all flex items-center justify-center gap-2"
               >
                 <Smartphone className="w-4 h-4 text-emerald-600" />
-                <span>Login with One-Time OTP Code</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  loginUser('tanvir.google@gmail.com', 'Tanvir Ahmed');
-                  showToast('Google account verified via OAuth demo.');
-                }}
-                className="w-full py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-all flex items-center justify-center gap-2"
-              >
-                <span className="text-sm font-bold text-rose-500">G</span>
-                <span>Continue with Google</span>
+                <span>Login with Dynamic OTP Code</span>
               </button>
 
               <div className="pt-2 text-center text-xs text-slate-500">
                 Don't have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => setAuthMode('signup')}
+                  onClick={() => {
+                    setErrorMessage(null);
+                    setAuthMode('signup');
+                  }}
                   className="font-bold text-brand-600 hover:underline"
                 >
                   Sign Up Free
@@ -179,7 +243,7 @@ export const AuthModal: React.FC = () => {
           )}
 
           {authMode === 'signup' && (
-            <form onSubmit={handleSendOtp} className="space-y-3">
+            <form onSubmit={handleSignup} className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Full Name</label>
                 <div className="relative flex items-center">
@@ -198,7 +262,7 @@ export const AuthModal: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Mobile Number</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Bangladeshi Mobile Number</label>
                 <div className="relative flex items-center">
                   <span className="absolute left-3 text-slate-400">
                     <Smartphone className="w-4 h-4" />
@@ -215,7 +279,7 @@ export const AuthModal: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Create Password</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Create Password (Min 8 chars, letters & numbers)</label>
                 <div className="relative flex items-center">
                   <span className="absolute left-3 text-slate-400">
                     <Lock className="w-4 h-4" />
@@ -225,7 +289,7 @@ export const AuthModal: React.FC = () => {
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Minimum 6 characters"
+                    placeholder="••••••••••••"
                     className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-xs sm:text-sm text-slate-900 focus:outline-none focus:border-brand-500"
                   />
                 </div>
@@ -242,9 +306,10 @@ export const AuthModal: React.FC = () => {
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-98"
+                disabled={isSubmitting}
+                className="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
               >
-                <span>Continue & Verify Mobile</span>
+                <span>{isSubmitting ? 'Securing Account...' : 'Create Account with PBKDF2'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -252,7 +317,10 @@ export const AuthModal: React.FC = () => {
                 Already registered?{' '}
                 <button
                   type="button"
-                  onClick={() => setAuthMode('login')}
+                  onClick={() => {
+                    setErrorMessage(null);
+                    setAuthMode('login');
+                  }}
                   className="font-bold text-brand-600 hover:underline"
                 >
                   Log In
@@ -266,6 +334,10 @@ export const AuthModal: React.FC = () => {
               <div className="w-12 h-12 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center mx-auto">
                 <ShieldCheck className="w-6 h-6" />
               </div>
+
+              <p className="text-xs text-slate-500">
+                Enter the dynamic 4-digit code dispatched to your mobile.
+              </p>
 
               <div className="flex justify-center gap-3 py-2">
                 {otpCode.map((digit, idx) => (
@@ -288,15 +360,18 @@ export const AuthModal: React.FC = () => {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-98"
+                className="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{isSubmitting ? 'Verifying...' : 'Confirm & Enter KHABAR'}</span>
+                <span>{isSubmitting ? 'Verifying OTP...' : 'Confirm & Enter KHABAR'}</span>
               </button>
 
               <button
                 type="button"
-                onClick={() => setAuthMode('login')}
+                onClick={() => {
+                  setErrorMessage(null);
+                  setAuthMode('login');
+                }}
                 className="text-xs text-slate-500 hover:text-slate-800"
               >
                 Back to Standard Login

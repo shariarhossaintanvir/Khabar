@@ -10,6 +10,7 @@ import { AuthModal } from './components/modals/AuthModal';
 import { ReviewModal } from './components/modals/ReviewModal';
 import { NotificationDrawer } from './components/modals/NotificationDrawer';
 import { Toast } from './components/common/Toast';
+import { RoleGateModal } from './components/modals/RoleGateModal';
 
 // Views
 import { HomeView } from './components/views/HomeView';
@@ -28,7 +29,7 @@ import { RestaurantPartnerView } from './components/views/RestaurantPartnerView'
 import { RiderDeliveryView } from './components/views/RiderDeliveryView';
 
 const MainAppContent: React.FC = () => {
-  const { currentView, portalMode } = useKhabar();
+  const { currentView, portalMode, roleGateState, setRoleGateState, handleRoleGateSuccess } = useKhabar();
 
   const isCustomerPortal = portalMode === 'customer' && !['admin', 'partner', 'rider'].includes(currentView);
 
@@ -88,6 +89,14 @@ const MainAppContent: React.FC = () => {
       <AuthModal />
       <ReviewModal />
       <NotificationDrawer />
+
+      {/* Role Gate Authentication Modal for Privileged Portals */}
+      <RoleGateModal
+        isOpen={roleGateState.isOpen}
+        targetRole={roleGateState.targetRole}
+        onClose={() => setRoleGateState({ isOpen: false, targetRole: 'CUSTOMER' })}
+        onSuccess={handleRoleGateSuccess}
+      />
 
       {/* Mobile Bottom Navigation Bar (customer mode only) */}
       {isCustomerPortal && <MobileBottomNav />}

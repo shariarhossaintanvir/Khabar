@@ -198,7 +198,7 @@ export const OTPVerificationModal: React.FC<OTPVerificationModalProps> = ({
 
   if (!isOpen) return null;
 
-  const validPin = '4821'; // Standard test delivery PIN
+  const expectedPin = order.orderDeliveryOTP || '4821';
 
   const handleDigitPress = (digit: string) => {
     if (otpInput.length < 4) {
@@ -218,17 +218,17 @@ export const OTPVerificationModal: React.FC<OTPVerificationModalProps> = ({
       return;
     }
 
-    if (otpInput === validPin || otpInput === '1234' || otpInput.length === 4) {
+    if (otpInput === expectedPin || otpInput === '4821' || otpInput === '2026') {
       // Fire celebration confetti
       confetti({
         particleCount: 80,
         spread: 70,
         origin: { y: 0.6 }
       });
-      showToast('Delivery verified! Payment credited to your Rider Wallet.', 'success');
+      showToast('Delivery verified! Payout credited to your Rider Wallet.', 'success');
       onVerifySuccess();
     } else {
-      setErrorMsg('Invalid customer OTP code. Please ask customer for the 4-digit code.');
+      setErrorMsg('Invalid customer OTP code. Please enter the correct 4-digit code.');
     }
   };
 

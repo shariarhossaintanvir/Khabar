@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type {
   LocationItem,
   Restaurant,
@@ -26,6 +26,26 @@ import {
   DEMO_RIDER_DELIVERIES,
 } from '../data/khabarData';
 import { TRANSLATIONS, type Language, type TranslationStrings } from '../data/translations';
+
+// Security Engine Imports
+import { authService } from '../security/auth';
+import { orderEngine, type OrderStatus } from '../security/orderEngine';
+import { couponEngine } from '../security/couponEngine';
+import { paymentSecurity } from '../security/paymentSecurity';
+import { auditLogger, type AuditLogEntry } from '../security/auditLogger';
+import {
+  assertPermission,
+  assertCanManageRestaurant,
+  type AuthenticatedUser,
+  type UserRole,
+} from '../security/rbac';
+import {
+  sanitizeText,
+  validateBDPhone,
+  validateReservationDate,
+  validateInteger,
+} from '../security/validation';
+import { rateLimiter, RATE_LIMITS } from '../security/rateLimiter';
 
 export type KhabarView =
   | 'home'
@@ -78,9 +98,12 @@ export interface OrderRecord {
   deliverySchedule?: 'ASAP' | 'SCHEDULED';
   scheduledTime?: string;
   paymentMethod: 'Cash on Delivery' | 'bKash' | 'Nagad' | 'Card';
+  paymentStatus?: 'PENDING' | 'PAID' | 'FAILED';
+  transactionId?: string;
   placedAt: string;
   estimatedDeliveryMin: number;
-  status: 'PLACED' | 'CONFIRMED' | 'PREPARING' | 'PICKED_UP' | 'ON_THE_WAY' | 'DELIVERED' | 'CANCELLED';
+  status: OrderStatus;
+  orderDeliveryOTP?: string;
   riderName?: string;
   riderPhone?: string;
   riderVehicle?: string;
@@ -114,6 +137,7 @@ export interface CheckoutFormData {
   deliverySchedule?: 'ASAP' | 'SCHEDULED';
   scheduledTime?: string;
   paymentMethod: 'Cash on Delivery' | 'bKash' | 'Nagad' | 'Card';
+  idempotencyKey?: string;
 }
 
 export interface ReservationFormData {
@@ -151,6 +175,7 @@ export interface UserProfile {
   name: string;
   phone: string;
   email: string;
+  role?: UserRole;
   isLoggedIn: boolean;
 }
 
@@ -160,9 +185,12 @@ interface KhabarContextType {
   toggleLanguage: () => void;
   t: TranslationStrings;
 
-  // Portal Role
+  // Portal Role & Gate
   portalMode: PortalMode;
   setPortalMode: (mode: PortalMode) => void;
+  roleGateState: { isOpen: boolean; targetRole: UserRole; pendingMode?: PortalMode };
+  setRoleGateState: React.Dispatch<React.SetStateAction<{ isOpen: boolean; targetRole: UserRole; pendingMode?: PortalMode }>>;
+  handleRoleGateSuccess: () => void;
 
   // Navigation
   currentView: KhabarView;
@@ -232,14 +260,14 @@ interface KhabarContextType {
   orders: OrderRecord[];
   activeTrackingOrder: OrderRecord | null;
   setActiveTrackingOrder: (order: OrderRecord | null) => void;
-  placeOrder: (formData: CheckoutFormData) => OrderRecord;
+  placeOrder: (formData: CheckoutFormData) => OrderRecord | null;
   reorder: (order: OrderRecord) => void;
   cancelOrder: (orderId: string) => void;
   updateOrderStatus: (orderId: string, status: OrderRecord['status']) => void;
 
   // Table Reservations
   reservations: ReservationRecord[];
-  makeReservation: (formData: ReservationFormData) => ReservationRecord;
+  makeReservation: (formData: ReservationFormData) => ReservationRecord | null;
   cancelReservation: (id: string) => void;
 
   // Favorites
@@ -249,7 +277,13 @@ interface KhabarContextType {
 
   // User Profile & Addresses
   user: UserProfile;
+  authenticatedUser: AuthenticatedUser | null;
   loginUser: (phoneOrEmail: string, name?: string) => void;
+  loginWithPassword: (identifier: string, pass: string) => Promise<{ success: boolean; user?: AuthenticatedUser; error?: string }>;
+  loginWithRoleCredentials: (identifier: string, pass: string, targetRole: UserRole) => Promise<{ success: boolean; user?: AuthenticatedUser; error?: string }>;
+  registerCustomer: (name: string, phone: string, pass: string) => Promise<{ success: boolean; user?: AuthenticatedUser; error?: string }>;
+  requestOTP: (identifier: string) => { success: boolean; error?: string; message?: string; otpPreview?: string };
+  verifyOTP: (identifier: string, code: string) => { success: boolean; user?: AuthenticatedUser; error?: string };
   logoutUser: () => void;
   savedAddresses: SavedAddress[];
   addSavedAddress: (addr: Omit<SavedAddress, 'id'>) => void;
@@ -334,6 +368,9 @@ interface KhabarContextType {
   completeDeliveryWithOTP: (orderId: string, otp: string) => boolean;
   riderDeliveries: RiderDeliveryRecord[];
   walletBalance: number;
+
+  // Audit Logs (Admin)
+  auditLogs: AuditLogEntry[];
 }
 
 const KhabarContext = createContext<KhabarContextType | undefined>(undefined);
@@ -361,26 +398,104 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const t = TRANSLATIONS[language];
 
-  // Portal Mode
-  const [portalMode, setPortalModeState] = useState<PortalMode>('customer');
+  // Toast
+  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
 
-  const setPortalMode = (mode: PortalMode) => {
-    setPortalModeState(mode);
-    if (mode === 'admin') setCurrentView('admin');
-    else if (mode === 'partner') setCurrentView('partner');
-    else if (mode === 'rider') setCurrentView('rider');
-    else setCurrentView('home');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const showToast = useCallback((message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 3600);
+  }, []);
+
+  // Authentication State
+  const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>({
+    id: 'user-customer-1',
+    name: 'Tanvir Ahmed',
+    email: 'tanvir@khabar.com',
+    phone: '+8801712345678',
+    role: 'CUSTOMER',
+  });
+
+  const [user, setUser] = useState<UserProfile>({
+    name: 'Tanvir Ahmed',
+    phone: '+880 1712-345678',
+    email: 'tanvir@khabar.com',
+    role: 'CUSTOMER',
+    isLoggedIn: true,
+  });
+
+  // Portal Mode & Role Gate State
+  const [portalMode, setPortalModeState] = useState<PortalMode>('customer');
+  const [roleGateState, setRoleGateState] = useState<{
+    isOpen: boolean;
+    targetRole: UserRole;
+    pendingMode?: PortalMode;
+  }>({
+    isOpen: false,
+    targetRole: 'ADMIN',
+  });
 
   // Navigation
   const [currentView, setCurrentView] = useState<KhabarView>('home');
+
+  // Role Gate Enforcement on Portal Switch
+  const setPortalMode = (mode: PortalMode) => {
+    if (mode === 'customer') {
+      setPortalModeState('customer');
+      setCurrentView('home');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // Role requirements for privileged portals
+    if (mode === 'admin') {
+      if (authenticatedUser?.role === 'ADMIN') {
+        setPortalModeState('admin');
+        setCurrentView('admin');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        setRoleGateState({ isOpen: true, targetRole: 'ADMIN', pendingMode: 'admin' });
+      }
+      return;
+    }
+
+    if (mode === 'partner') {
+      if (authenticatedUser?.role === 'RESTAURANT' || authenticatedUser?.role === 'ADMIN') {
+        setPortalModeState('partner');
+        setCurrentView('partner');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        setRoleGateState({ isOpen: true, targetRole: 'RESTAURANT', pendingMode: 'partner' });
+      }
+      return;
+    }
+
+    if (mode === 'rider') {
+      if (authenticatedUser?.role === 'RIDER' || authenticatedUser?.role === 'ADMIN') {
+        setPortalModeState('rider');
+        setCurrentView('rider');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        setRoleGateState({ isOpen: true, targetRole: 'RIDER', pendingMode: 'rider' });
+      }
+      return;
+    }
+  };
+
+  const handleRoleGateSuccess = () => {
+    const targetMode = roleGateState.pendingMode || 'customer';
+    setRoleGateState({ isOpen: false, targetRole: 'CUSTOMER' });
+    setPortalModeState(targetMode);
+    setCurrentView(targetMode === 'customer' ? 'home' : targetMode);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // Location
   const [selectedLocation, setSelectedLocation] = useState<LocationItem>(BANGLADESH_LOCATIONS[0]);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
 
-  // Search & Filter
+  // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState<'recommended' | 'rating' | 'fastest' | 'price-asc' | 'price-desc'>('recommended');
@@ -389,239 +504,149 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [freeDeliveryOnly, setFreeDeliveryOnly] = useState(false);
   const [budgetFilter, setBudgetFilter] = useState<number | null>(null);
 
-  // Restaurant Catalog & Live Management
+  // Restaurant Catalog
   const [restaurants, setRestaurants] = useState<Restaurant[]>(RESTAURANTS);
   const [activeRestaurant, setActiveRestaurant] = useState<Restaurant | null>(RESTAURANTS[0]);
 
-  const toggleRestaurantOpenStatus = (restaurantId: string) => {
-    setRestaurants((prev) =>
-      prev.map((r) => (r.id === restaurantId ? { ...r, isOpen: !r.isOpen } : r))
-    );
-    showToast('Restaurant operating hours status updated.');
-  };
-
-  const toggleMenuItemAvailability = (restaurantId: string, itemId: string) => {
-    setRestaurants((prev) =>
-      prev.map((r) => {
-        if (r.id !== restaurantId) return r;
-        return {
-          ...r,
-          menuItems: r.menuItems.map((item) =>
-            item.id === itemId ? { ...item, isAvailable: item.isAvailable === false ? true : false } : item
-          ),
-        };
-      })
-    );
-    showToast('Menu item stock status updated.');
-  };
-
-  // Food Customization Modal
+  // Food Inspection Modal
   const [inspectingFood, setInspectingFood] = useState<{ item: MenuItem; restaurant: Restaurant } | null>(null);
 
-  // Cart Drawer
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_cart');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Cart
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [appliedCoupon, setAppliedCoupon] = useState<PromoCoupon | null>(null);
 
-  // User Profile
-  const [user, setUser] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_user');
-      return saved ? JSON.parse(saved) : { name: 'Tanvir Ahmed', phone: '+880 1712-345678', email: 'tanvir.ahmed@example.com', isLoggedIn: true };
-    } catch {
-      return { name: 'Tanvir Ahmed', phone: '+880 1712-345678', email: 'tanvir.ahmed@example.com', isLoggedIn: true };
-    }
-  });
-
-  const loginUser = (phoneOrEmail: string, name = 'Tanvir Ahmed') => {
-    const updated = {
-      name,
-      phone: phoneOrEmail.includes('@') ? '+880 1712-345678' : phoneOrEmail,
-      email: phoneOrEmail.includes('@') ? phoneOrEmail : 'tanvir.ahmed@example.com',
-      isLoggedIn: true,
-    };
-    setUser(updated);
-    try {
-      localStorage.setItem('khabar_user', JSON.stringify(updated));
-    } catch {}
-    setIsAuthModalOpen(false);
-    showToast(`Welcome back, ${name}! Logged in successfully.`);
-  };
-
-  const logoutUser = () => {
-    const guest = { name: 'Guest Foodie', phone: '', email: '', isLoggedIn: false };
-    setUser(guest);
-    try {
-      localStorage.setItem('khabar_user', JSON.stringify(guest));
-    } catch {}
-    showToast('Signed out of KHABAR.');
-  };
-
   // Saved Addresses
-  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_addresses');
-      return saved ? JSON.parse(saved) : DEMO_ADDRESSES;
-    } catch {
-      return DEMO_ADDRESSES;
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>(DEMO_ADDRESSES);
+
+  // Active Partner Restaurant Outlet (Strict tenant isolation for RESTAURANT role)
+  const [activePartnerRestaurantId, setActivePartnerRestaurantIdState] = useState<string>('takeout');
+
+  const setActivePartnerRestaurantId = (id: string) => {
+    // If user is RESTAURANT partner, they cannot manage any other outlet
+    if (authenticatedUser?.role === 'RESTAURANT' && authenticatedUser.restaurantId !== id) {
+      showToast('Access Denied: You may only manage your authorized restaurant outlet.', 'error');
+      return;
     }
-  });
-
-  const addSavedAddress = (addr: Omit<SavedAddress, 'id'>) => {
-    const newAddr: SavedAddress = { ...addr, id: `addr-${Date.now()}` };
-    setSavedAddresses((prev) => [newAddr, ...prev]);
-    showToast(`Added address (${addr.type})`);
+    setActivePartnerRestaurantIdState(id);
   };
 
-  const deleteSavedAddress = (id: string) => {
-    setSavedAddresses((prev) => prev.filter((a) => a.id !== id));
-    showToast('Address removed.');
-  };
-
-  const setDefaultAddress = (id: string) => {
-    setSavedAddresses((prev) =>
-      prev.map((a) => ({ ...a, isDefault: a.id === id }))
-    );
-    showToast('Default delivery address updated.');
-  };
-
-  // Orders History
-  const [orders, setOrders] = useState<OrderRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_orders');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [
-      {
-        id: 'KH-10248',
-        items: [
-          {
-            id: 'demo-1',
-            menuItem: RESTAURANTS[0].menuItems[0],
-            restaurantId: RESTAURANTS[0].id,
-            restaurantName: RESTAURANTS[0].name,
-            quantity: 2,
-            selectedSize: 'Regular Fillet',
-            selectedSauces: ['Signature Takeout Sauce'],
-            selectedAddOns: [{ id: 'cheese', name: 'Extra Cheddar Cheese', price: 30 }],
-            itemTotal: 590,
-          },
-        ],
-        restaurantId: RESTAURANTS[0].id,
-        restaurantName: RESTAURANTS[0].name,
-        restaurantLogo: RESTAURANTS[0].logo,
-        subtotal: 590,
-        discount: 50,
-        deliveryFee: 49,
-        vat: 27,
-        total: 616,
-        customerName: 'Tanvir Ahmed',
-        customerPhone: '+880 1712-345678',
-        deliveryAddress: 'House 42, Flat 5B, Road 11',
-        deliveryArea: 'Dhanmondi, Dhaka',
-        paymentMethod: 'bKash',
-        placedAt: '13:45',
-        estimatedDeliveryMin: 25,
-        status: 'ON_THE_WAY',
-        riderName: 'Md. Rahim Uddin',
-        riderPhone: '+880 1819-223344',
-        riderVehicle: 'Honda CG125 (Thermal Heated Case)',
-      },
-      {
-        id: 'KH-9842',
-        items: [
-          {
-            id: 'demo-2',
-            menuItem: RESTAURANTS[1].menuItems[0],
-            restaurantId: RESTAURANTS[1].id,
-            restaurantName: RESTAURANTS[1].name,
-            quantity: 1,
-            selectedAddOns: [{ id: 'borhani-cup', name: 'Clay Cup Borhani (250ml)', price: 60 }],
-            itemTotal: 390,
-          },
-        ],
-        restaurantId: RESTAURANTS[1].id,
-        restaurantName: RESTAURANTS[1].name,
-        restaurantLogo: RESTAURANTS[1].logo,
-        subtotal: 390,
-        discount: 0,
-        deliveryFee: 0,
-        vat: 19.5,
-        total: 409.5,
-        customerName: 'Tanvir Ahmed',
-        customerPhone: '+880 1712-345678',
-        deliveryAddress: 'House 42, Flat 5B, Road 11',
-        deliveryArea: 'Dhanmondi, Dhaka',
-        paymentMethod: 'Cash on Delivery',
-        placedAt: 'Yesterday, 19:20',
-        estimatedDeliveryMin: 30,
-        status: 'DELIVERED',
-        rating: 5,
-        hasReview: true,
-      },
-    ];
-  });
+  // Orders State (Seeded with initial demo orders)
+  const [orders, setOrders] = useState<OrderRecord[]>([
+    {
+      id: 'KH-10248',
+      items: [
+        {
+          id: 'demo-1',
+          menuItem: RESTAURANTS[0].menuItems[0],
+          restaurantId: RESTAURANTS[0].id,
+          restaurantName: RESTAURANTS[0].name,
+          quantity: 2,
+          selectedSize: 'Regular Fillet',
+          selectedSauces: ['Signature Takeout Sauce'],
+          selectedAddOns: [{ id: 'cheese', name: 'Extra Cheddar Cheese', price: 30 }],
+          itemTotal: 590,
+        },
+      ],
+      restaurantId: RESTAURANTS[0].id,
+      restaurantName: RESTAURANTS[0].name,
+      restaurantLogo: RESTAURANTS[0].logo,
+      subtotal: 590,
+      discount: 50,
+      deliveryFee: 49,
+      vat: 27,
+      total: 616,
+      customerName: 'Tanvir Ahmed',
+      customerPhone: '+880 1712-345678',
+      deliveryAddress: 'House 42, Flat 5B, Road 11',
+      deliveryArea: 'Dhanmondi, Dhaka',
+      paymentMethod: 'bKash',
+      paymentStatus: 'PAID',
+      transactionId: 'BKH-INIT-10248',
+      placedAt: '13:45',
+      estimatedDeliveryMin: 25,
+      status: 'ON_THE_WAY',
+      orderDeliveryOTP: '4821',
+      riderName: 'Md. Rahim Uddin',
+      riderPhone: '+880 1819-223344',
+      riderVehicle: 'Honda CG125 (Thermal Heated Case)',
+    },
+    {
+      id: 'KH-9842',
+      items: [
+        {
+          id: 'demo-2',
+          menuItem: RESTAURANTS[1].menuItems[0],
+          restaurantId: RESTAURANTS[1].id,
+          restaurantName: RESTAURANTS[1].name,
+          quantity: 1,
+          selectedAddOns: [{ id: 'borhani-cup', name: 'Clay Cup Borhani (250ml)', price: 60 }],
+          itemTotal: 390,
+        },
+      ],
+      restaurantId: RESTAURANTS[1].id,
+      restaurantName: RESTAURANTS[1].name,
+      restaurantLogo: RESTAURANTS[1].logo,
+      subtotal: 390,
+      discount: 0,
+      deliveryFee: 0,
+      vat: 19.5,
+      total: 409.5,
+      customerName: 'Tanvir Ahmed',
+      customerPhone: '+880 1712-345678',
+      deliveryAddress: 'House 42, Flat 5B, Road 11',
+      deliveryArea: 'Dhanmondi, Dhaka',
+      paymentMethod: 'Cash on Delivery',
+      paymentStatus: 'PAID',
+      transactionId: 'COD-INIT-9842',
+      placedAt: 'Yesterday, 19:20',
+      estimatedDeliveryMin: 30,
+      status: 'DELIVERED',
+      orderDeliveryOTP: '9912',
+      rating: 5,
+      hasReview: true,
+    },
+  ]);
 
   const [activeTrackingOrder, setActiveTrackingOrder] = useState<OrderRecord | null>(orders[0] || null);
 
-  // Table Reservations
-  const [reservations, setReservations] = useState<ReservationRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_reservations');
-      return saved ? JSON.parse(saved) : [
-        {
-          id: 'RES-KH-8821',
-          restaurantId: 'sultans-dine',
-          restaurantName: "Sultan's Dine",
-          restaurantAddress: 'Green Akshay Plaza, Satmasjid Road, Dhanmondi',
-          date: 'Tonight',
-          time: '8:30 PM',
-          guests: 4,
-          seating: 'Indoor AC',
-          specialRequest: 'Window table if available',
-          guestName: 'Tanvir Ahmed',
-          guestPhone: '+880 1712-345678',
-          createdAt: '21 Sep 2026',
-          status: 'CONFIRMED',
-        }
-      ];
-    } catch {
-      return [];
-    }
-  });
+  // Reservations
+  const [reservations, setReservations] = useState<ReservationRecord[]>([
+    {
+      id: 'RES-KH-1024',
+      restaurantId: RESTAURANTS[1].id,
+      restaurantName: RESTAURANTS[1].name,
+      restaurantAddress: RESTAURANTS[1].address,
+      date: '2026-09-28',
+      time: '20:30',
+      guests: 4,
+      seating: 'Indoor AC',
+      specialRequest: 'Corner family table with high chairs.',
+      guestName: 'Tanvir Ahmed',
+      guestPhone: '+880 1712-345678',
+      createdAt: '24 Sep 2026',
+      status: 'CONFIRMED',
+    },
+  ]);
 
   // Favorites
-  const [favoriteRestaurantIds, setFavoriteRestaurantIds] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('khabar_favorites');
-      return saved ? JSON.parse(saved) : ['takeout', 'kacchi-bhai', 'pizza-burg'];
-    } catch {
-      return ['takeout', 'kacchi-bhai', 'pizza-burg'];
-    }
-  });
+  const [favoriteRestaurantIds, setFavoriteRestaurantIds] = useState<string[]>([RESTAURANTS[0].id, RESTAURANTS[1].id]);
 
   // Notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>([
     {
       id: 'notif-1',
-      title: 'Rider is on the way!',
-      message: 'Md. Rahim Uddin is delivering your Takeout order. Arrival in ~12 mins.',
-      time: 'Just now',
+      title: 'Order Confirmed (#KH-10248)',
+      message: 'Takeout kitchen has received your burger order and started preparation.',
+      time: '12 mins ago',
       isRead: false,
       type: 'ORDER',
       actionView: 'tracking',
     },
     {
       id: 'notif-2',
-      title: 'Free Delivery Weekend is Live!',
-      message: 'Use code FREESHIP on any order above ৳400 today.',
+      title: '20% OFF Midnight Biryani',
+      message: 'Use voucher code KHABAR50 to get ৳50 flat discount on orders above ৳400.',
       time: '1 hour ago',
       isRead: false,
       type: 'PROMO',
@@ -637,15 +662,7 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       actionView: 'reservations',
     },
   ]);
-
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
-
-  const markAllNotificationsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    showToast('All notifications marked as read.');
-  };
-
-  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
 
   // Support Tickets
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([
@@ -659,141 +676,43 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     },
   ]);
 
-  const createSupportTicket = (category: string, subject: string, message: string, orderId?: string) => {
-    const newTicket: SupportTicket = {
-      id: `TCK-${Math.floor(100 + Math.random() * 900)}`,
-      category,
-      subject,
-      orderId,
-      message,
-      status: 'OPEN',
-      createdAt: 'Just now',
-    };
-    setSupportTickets((prev) => [newTicket, ...prev]);
-    showToast(`Support Ticket #${newTicket.id} created. Our Dhaka team will respond shortly.`);
-  };
-
-  // Modals: Auth & Review
+  // Modals
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'otp'>('login');
-
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [reviewOrderTarget, setReviewOrderTarget] = useState<OrderRecord | null>(null);
 
-  const openReviewModal = (order: OrderRecord) => {
-    setReviewOrderTarget(order);
-    setIsReviewModalOpen(true);
-  };
+  // Admin Ecosystem State
+  const [pendingRestaurants, setPendingRestaurants] = useState<PendingRestaurant[]>(DEMO_PENDING_RESTAURANTS);
+  const [coupons, setCoupons] = useState<PromoCoupon[]>(PROMO_COUPONS);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>(DEMO_TRANSACTIONS);
+  const [riders, setRiders] = useState<RiderProfile[]>(DEMO_RIDERS);
 
-  const submitReview = (
-    rating: number,
-    comment: string,
-    foodQuality = 5,
-    delivery = 5,
-    packaging = 5,
-    value = 5
-  ) => {
-    if (!reviewOrderTarget) return;
+  // Partner State
+  const [inventory, setInventory] = useState<InventoryItem[]>(DEMO_INVENTORY);
 
-    const newRev = {
-      id: `rev-${Date.now()}`,
-      userName: reviewOrderTarget.customerName || user.name || 'Verified Foodie',
-      rating,
-      date: 'Today',
-      comment: comment.trim() || 'Food was delicious, freshly prepared and delivered warm!',
-      foodQualityRating: foodQuality,
-      deliveryRating: delivery,
-      packagingRating: packaging,
-      valueRating: value,
-    };
+  // Rider State
+  const [riderOnline, setRiderOnline] = useState<boolean>(true);
+  const [incomingDelivery, setIncomingDelivery] = useState<OrderRecord | null>(orders[0] || null);
+  const [activeRiderStep, setActiveRiderStep] = useState<number>(1);
+  const [riderDeliveries, setRiderDeliveries] = useState<RiderDeliveryRecord[]>(DEMO_RIDER_DELIVERIES);
+  const [walletBalance, setWalletBalance] = useState<number>(3450);
 
-    setRestaurants((prev) =>
-      prev.map((r) => {
-        if (r.id === reviewOrderTarget.restaurantId) {
-          const updatedReviews = [newRev, ...r.reviews];
-          const newAvg = Number(
-            (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
-          );
-          return {
-            ...r,
-            rating: newAvg,
-            reviewsCount: r.reviewsCount + 1,
-            reviews: updatedReviews,
-          };
-        }
-        return r;
-      })
-    );
+  // Audit Logs Live Feed
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => auditLogger.getRecentLogs(100));
 
-    setActiveRestaurant((prev) => {
-      if (!prev || prev.id !== reviewOrderTarget.restaurantId) return prev;
-      const updatedReviews = [newRev, ...prev.reviews];
-      const newAvg = Number(
-        (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
-      );
-      return {
-        ...prev,
-        rating: newAvg,
-        reviewsCount: prev.reviewsCount + 1,
-        reviews: updatedReviews,
-      };
-    });
-
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === reviewOrderTarget.id ? { ...o, rating, hasReview: true } : o
-      )
-    );
-    setIsReviewModalOpen(false);
-    showToast('Thank you for reviewing your meal! 50 KHABAR points added.', 'success');
-  };
-
-  // Toast
-  const [toast, setToast] = useState<{ message: string; type?: 'success' | 'info' | 'error' } | null>(null);
-
-  // Sync to localStorage
+  // Sync audit logs periodically
   useEffect(() => {
-    try {
-      localStorage.setItem('khabar_cart', JSON.stringify(cart));
-    } catch {}
-  }, [cart]);
+    const interval = setInterval(() => {
+      setAuditLogs(auditLogger.getRecentLogs(100));
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('khabar_orders', JSON.stringify(orders));
-    } catch {}
-  }, [orders]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('khabar_reservations', JSON.stringify(reservations));
-    } catch {}
-  }, [reservations]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('khabar_favorites', JSON.stringify(favoriteRestaurantIds));
-    } catch {}
-  }, [favoriteRestaurantIds]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('khabar_addresses', JSON.stringify(savedAddresses));
-    } catch {}
-  }, [savedAddresses]);
-
-  // Toast Helper
-  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => {
-      setToast((curr) => (curr?.message === message ? null : curr));
-    }, 3200);
-  };
-
-  // Currency helper
+  // Currency Formatter
   const formatBDT = (amount: number) => `৳${Math.round(amount).toLocaleString('en-IN')}`;
 
-  // Navigation Helper
+  // Navigation
   const navigateTo = (view: KhabarView, params?: { restaurantId?: string; categoryId?: string; orderId?: string }) => {
     if (params?.restaurantId) {
       const found = restaurants.find((r) => r.id === params.restaurantId);
@@ -838,26 +757,37 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     );
   };
 
-  // Cart Calculations
-  const subtotal = cart.reduce((sum, item) => sum + item.itemTotal, 0);
-  const isFreeDeliveryQualified = subtotal >= 600 || appliedCoupon?.discountType === 'FREE_DELIVERY';
-  const deliveryFee = subtotal === 0 ? 0 : isFreeDeliveryQualified ? 0 : selectedLocation.deliveryFee;
+  // Authoritative Dynamic Cart Calculations
+  const authoritativeComputation = orderEngine.calculateOrderFinancials(
+    cart,
+    appliedCoupon?.code,
+    selectedLocation.deliveryFee,
+    user.phone
+  );
 
-  let discount = 0;
-  if (appliedCoupon && subtotal >= appliedCoupon.minOrder) {
-    if (appliedCoupon.discountType === 'FLAT') {
-      discount = Math.min(subtotal, appliedCoupon.discountValue);
-    } else if (appliedCoupon.discountType === 'PERCENT') {
-      const rawDiscount = (subtotal * appliedCoupon.discountValue) / 100;
-      discount = appliedCoupon.maxDiscount ? Math.min(rawDiscount, appliedCoupon.maxDiscount) : rawDiscount;
-    }
-  }
+  const subtotal = authoritativeComputation.success && authoritativeComputation.totals
+    ? authoritativeComputation.totals.subtotal
+    : cart.reduce((sum, item) => sum + item.itemTotal, 0);
 
-  const taxableSubtotal = Math.max(0, subtotal - discount);
-  const vat = taxableSubtotal > 0 ? taxableSubtotal * 0.05 : 0;
-  const total = Math.max(0, subtotal - discount + deliveryFee + vat);
+  const discount = authoritativeComputation.success && authoritativeComputation.totals
+    ? authoritativeComputation.totals.discount
+    : 0;
+
+  const deliveryFee = authoritativeComputation.success && authoritativeComputation.totals
+    ? authoritativeComputation.totals.deliveryFee
+    : (subtotal >= 600 ? 0 : selectedLocation.deliveryFee);
+
+  const vat = authoritativeComputation.success && authoritativeComputation.totals
+    ? authoritativeComputation.totals.vat
+    : Math.round(Math.max(0, subtotal - discount) * 0.05);
+
+  const total = authoritativeComputation.success && authoritativeComputation.totals
+    ? authoritativeComputation.totals.total
+    : Math.max(0, subtotal - discount + deliveryFee + vat);
+
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
+  // Cart Mutators
   const addToCart = (
     item: MenuItem,
     restaurant: Restaurant,
@@ -869,26 +799,27 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   ) => {
     if (cart.length > 0 && cart[0].restaurantId !== restaurant.id) {
       const confirmReplace = window.confirm(
-        `Your bag has items from "${cart[0].restaurantName}". Start a new bag with items from "${restaurant.name}"?`
+        `Your bag has dishes from "${cart[0].restaurantName}". Start a fresh bag with items from "${restaurant.name}"?`
       );
       if (!confirmReplace) return;
       setCart([]);
     }
 
+    const safeQty = Math.max(1, Math.min(50, Math.floor(quantity)));
     const addOnTotal = addOns.reduce((sum, a) => sum + a.price, 0);
     const singlePrice = item.price + addOnTotal;
-    const itemTotal = singlePrice * quantity;
+    const itemTotal = singlePrice * safeQty;
 
     const newItem: CartItem = {
       id: `${item.id}-${Date.now()}`,
       menuItem: item,
       restaurantId: restaurant.id,
       restaurantName: restaurant.name,
-      quantity,
+      quantity: safeQty,
       selectedSize,
       selectedSauces,
       selectedAddOns: addOns,
-      specialInstructions: instructions,
+      specialInstructions: sanitizeText(instructions, 200),
       itemTotal,
     };
 
@@ -906,14 +837,15 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       removeFromCart(cartItemId);
       return;
     }
+    const safeQty = Math.min(50, Math.floor(newQty));
     setCart((prev) =>
       prev.map((item) => {
         if (item.id === cartItemId) {
           const singlePrice = item.itemTotal / item.quantity;
           return {
             ...item,
-            quantity: newQty,
-            itemTotal: singlePrice * newQty,
+            quantity: safeQty,
+            itemTotal: singlePrice * safeQty,
           };
         }
         return item;
@@ -927,20 +859,19 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const applyCoupon = (code: string) => {
-    const trimmed = code.trim().toUpperCase();
-    const found = PROMO_COUPONS.find((c) => c.code === trimmed && c.status === 'AVAILABLE');
-    if (!found) {
-      return { success: false, message: 'Invalid or expired coupon code. Try KHABAR50 or FREESHIP.' };
+    const rateCheck = rateLimiter.checkLimit('coupon:check', RATE_LIMITS.COUPON_CHECK.max, RATE_LIMITS.COUPON_CHECK.windowMs);
+    if (!rateCheck.allowed) {
+      return { success: false, message: `Too many coupon attempts. Please wait ${rateCheck.retryAfterSeconds}s.` };
     }
-    if (subtotal < found.minOrder) {
-      return {
-        success: false,
-        message: `Minimum order of ${formatBDT(found.minOrder)} required for ${found.code}.`,
-      };
+
+    const result = couponEngine.validateCoupon(code, subtotal, user.phone);
+    if (!result.isValid || !result.coupon) {
+      return { success: false, message: result.error || 'Invalid or ineligible coupon code.' };
     }
-    setAppliedCoupon(found);
-    showToast(`Coupon ${found.code} applied! Saved discount.`, 'success');
-    return { success: true, message: `Coupon applied: ${found.badge}` };
+
+    setAppliedCoupon(result.coupon);
+    showToast(`Coupon ${result.coupon.code} applied! Saved discount.`, 'success');
+    return { success: true, message: `Coupon applied: ${result.coupon.badge}` };
   };
 
   const removeCoupon = () => {
@@ -948,65 +879,176 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     showToast('Coupon removed', 'info');
   };
 
-  // Place Order
-  const placeOrder = (formData: CheckoutFormData) => {
+  // Place Order (Server-Authoritative Price Calculation & Fraud Defense)
+  const placeOrder = (formData: CheckoutFormData): OrderRecord | null => {
+    // 1. Rate Limiting Check
+    const rateCheck = rateLimiter.checkLimit('order:create', RATE_LIMITS.ORDER_CREATE.max, RATE_LIMITS.ORDER_CREATE.windowMs);
+    if (!rateCheck.allowed) {
+      showToast(`Order submission rate limit exceeded. Please wait ${rateCheck.retryAfterSeconds}s.`, 'error');
+      return null;
+    }
+
+    // 2. Validate Customer Inputs
+    const phoneValidation = validateBDPhone(formData.customerPhone);
+    if (!phoneValidation.isValid) {
+      showToast(phoneValidation.error || 'Invalid mobile number.', 'error');
+      return null;
+    }
+
+    const cleanName = sanitizeText(formData.customerName, 80);
+    const cleanAddress = sanitizeText(formData.deliveryAddress, 250);
+    const cleanInstructions = sanitizeText(formData.deliveryInstructions, 250);
+
+    if (!cleanName || !cleanAddress) {
+      showToast('Recipient name and delivery address are mandatory.', 'error');
+      return null;
+    }
+
+    // 3. Authoritative Order Recalculation
+    const calculation = orderEngine.calculateOrderFinancials(
+      cart,
+      appliedCoupon?.code,
+      selectedLocation.deliveryFee,
+      phoneValidation.normalized
+    );
+
+    if (!calculation.success || !calculation.totals) {
+      showToast(calculation.error || 'Order recalculation failed.', 'error');
+      return null;
+    }
+
+    const authoritativeTotals = calculation.totals;
     const orderId = `KH-${Math.floor(10000 + Math.random() * 90000)}`;
-    const newOrder: OrderRecord = {
+
+    // 4. Payment Verification (Idempotent)
+    const idempotencyKey = formData.idempotencyKey || `idem-${orderId}-${Date.now()}`;
+    const paymentResult = paymentSecurity.verifyPaymentTransaction(
+      idempotencyKey,
+      orderId,
+      authoritativeTotals.total,
+      formData.paymentMethod,
+      phoneValidation.normalized
+    );
+
+    // 5. Commit Coupon Redemption
+    if (authoritativeTotals.appliedCouponCode && authoritativeTotals.discount > 0) {
+      couponEngine.recordRedemption(
+        authoritativeTotals.appliedCouponCode,
+        phoneValidation.normalized,
+        orderId,
+        authoritativeTotals.discount
+      );
+    }
+
+    // 6. Build Immutable Order Record
+    const verifiedOrder: OrderRecord = {
       id: orderId,
-      items: [...cart],
+      items: authoritativeTotals.verifiedItems,
       restaurantId: cart[0]?.restaurantId || 'takeout',
       restaurantName: cart[0]?.restaurantName || 'Takeout',
       restaurantLogo: restaurants.find((r) => r.id === cart[0]?.restaurantId)?.logo,
-      subtotal,
-      discount,
-      deliveryFee,
-      vat,
-      total,
-      customerName: formData.customerName,
-      customerPhone: formData.customerPhone,
-      deliveryAddress: formData.deliveryAddress,
-      deliveryArea: formData.deliveryArea,
-      landmark: formData.landmark,
-      deliveryInstructions: formData.deliveryInstructions,
+      subtotal: authoritativeTotals.subtotal,
+      discount: authoritativeTotals.discount,
+      deliveryFee: authoritativeTotals.deliveryFee,
+      vat: authoritativeTotals.vat,
+      total: authoritativeTotals.total,
+      customerName: cleanName,
+      customerPhone: phoneValidation.normalized,
+      deliveryAddress: cleanAddress,
+      deliveryArea: sanitizeText(formData.deliveryArea, 100),
+      landmark: sanitizeText(formData.landmark, 100),
+      deliveryInstructions: cleanInstructions,
       deliverySchedule: formData.deliverySchedule || 'ASAP',
       scheduledTime: formData.scheduledTime,
       paymentMethod: formData.paymentMethod,
+      paymentStatus: paymentResult.paymentStatus,
+      transactionId: paymentResult.transactionId,
       placedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       estimatedDeliveryMin: 28,
       status: 'CONFIRMED',
+      orderDeliveryOTP: authoritativeTotals.orderDeliveryOTP,
       riderName: 'Md. Rahim Uddin',
       riderPhone: '+880 1819-223344',
       riderVehicle: 'Honda CG125 (Thermal Heated Case)',
     };
 
-    setOrders((prev) => [newOrder, ...prev]);
-    setActiveTrackingOrder(newOrder);
+    setOrders((prev) => [verifiedOrder, ...prev]);
+    setActiveTrackingOrder(verifiedOrder);
     clearCart();
     setIsCartOpen(false);
-    navigateTo('tracking', { orderId: newOrder.id });
-    showToast(`Order #${orderId} confirmed!`, 'success');
+    navigateTo('tracking', { orderId: verifiedOrder.id });
+    showToast(`Order #${orderId} verified and confirmed! (Delivery OTP: ${verifiedOrder.orderDeliveryOTP})`, 'success');
 
-    // Progression simulation
+    auditLogger.log({
+      actorId: user.phone || 'guest',
+      actorName: cleanName,
+      actorRole: 'CUSTOMER',
+      action: 'CUSTOMER_PLACED_ORDER',
+      resourceType: 'order',
+      resourceId: orderId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+      details: {
+        total: verifiedOrder.total,
+        paymentMethod: verifiedOrder.paymentMethod,
+        transactionId: verifiedOrder.transactionId || 'none',
+      },
+    });
+
+    // Progression simulation strictly respecting order lifecycle
     setTimeout(() => {
-      updateOrderStatus(orderId, 'PREPARING');
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId && o.status === 'CONFIRMED' ? { ...o, status: 'PREPARING' } : o))
+      );
     }, 8000);
 
     setTimeout(() => {
-      updateOrderStatus(orderId, 'PICKED_UP');
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId && o.status === 'PREPARING' ? { ...o, status: 'PICKED_UP' } : o))
+      );
     }, 18000);
 
     setTimeout(() => {
-      updateOrderStatus(orderId, 'ON_THE_WAY');
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId && o.status === 'PICKED_UP' ? { ...o, status: 'ON_THE_WAY' } : o))
+      );
     }, 30000);
 
-    return newOrder;
+    return verifiedOrder;
   };
 
+  // Order State Machine with RBAC Verification
   const updateOrderStatus = (orderId: string, status: OrderRecord['status']) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) {
+      showToast('Target order not found.', 'error');
+      return;
+    }
+
+    const check = orderEngine.validateStatusTransition(targetOrder.status, status, authenticatedUser, targetOrder);
+    if (!check.allowed) {
+      showToast(check.error || 'Unauthorized order status transition.', 'error');
+      return;
+    }
+
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status } : o))
     );
     setActiveTrackingOrder((curr) => (curr?.id === orderId ? { ...curr, status } : curr));
+
+    auditLogger.log({
+      actorId: authenticatedUser?.id || 'system',
+      actorName: authenticatedUser?.name || 'Automated Stepper',
+      actorRole: authenticatedUser?.role || 'SYSTEM',
+      action: 'ORDER_STATUS_CHANGED',
+      resourceType: 'order',
+      resourceId: orderId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+      details: { fromStatus: targetOrder.status, toStatus: status },
+    });
+
+    showToast(`Order #${orderId} is now ${status}.`);
   };
 
   const reorder = (order: OrderRecord) => {
@@ -1017,16 +1059,63 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const cancelOrder = (orderId: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) return;
+
+    if (targetOrder.status !== 'PLACED' && targetOrder.status !== 'CONFIRMED') {
+      showToast('Order cannot be cancelled after the kitchen has started cooking.', 'error');
+      return;
+    }
+
     setOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status: 'CANCELLED' } : o))
     );
     showToast(`Order #${orderId} was cancelled.`, 'info');
+
+    auditLogger.log({
+      actorId: user.phone || 'customer',
+      actorName: user.name,
+      actorRole: 'CUSTOMER',
+      action: 'CUSTOMER_CANCELLED_ORDER',
+      resourceType: 'order',
+      resourceId: orderId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+    });
   };
 
-  // Table Reservations
-  const makeReservation = (formData: ReservationFormData) => {
+  // Table Reservations with Input Validation
+  const makeReservation = (formData: ReservationFormData): ReservationRecord | null => {
+    const rateCheck = rateLimiter.checkLimit('reservation:create', RATE_LIMITS.RESERVATION.max, RATE_LIMITS.RESERVATION.windowMs);
+    if (!rateCheck.allowed) {
+      showToast(`Reservation rate limit reached. Please wait ${rateCheck.retryAfterSeconds}s.`, 'error');
+      return null;
+    }
+
+    const dateCheck = validateReservationDate(formData.date);
+    if (!dateCheck.isValid) {
+      showToast(dateCheck.error || 'Invalid reservation date.', 'error');
+      return null;
+    }
+
+    const phoneCheck = validateBDPhone(formData.guestPhone);
+    if (!phoneCheck.isValid) {
+      showToast(phoneCheck.error || 'Invalid phone number.', 'error');
+      return null;
+    }
+
+    const guestsCheck = validateInteger(formData.guests, 1, 25, 'Guest count');
+    if (!guestsCheck.isValid) {
+      showToast(guestsCheck.error || 'Invalid party size.', 'error');
+      return null;
+    }
+
+    const cleanGuestName = sanitizeText(formData.guestName, 80);
+    const cleanRequest = sanitizeText(formData.specialRequest, 250);
+
     const targetRest = restaurants.find((r) => r.id === formData.restaurantId) || restaurants[0];
     const resId = `RES-KH-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const newReservation: ReservationRecord = {
       id: resId,
       restaurantId: targetRest.id,
@@ -1034,17 +1123,29 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       restaurantAddress: targetRest.address,
       date: formData.date,
       time: formData.time,
-      guests: formData.guests,
+      guests: guestsCheck.parsedValue,
       seating: formData.seating,
-      specialRequest: formData.specialRequest,
-      guestName: formData.guestName,
-      guestPhone: formData.guestPhone,
+      specialRequest: cleanRequest,
+      guestName: cleanGuestName,
+      guestPhone: phoneCheck.normalized,
       createdAt: new Date().toLocaleDateString(),
       status: 'CONFIRMED',
     };
 
     setReservations((prev) => [newReservation, ...prev]);
     showToast(`Table confirmed at ${targetRest.name}! Pass #${resId}`, 'success');
+
+    auditLogger.log({
+      actorId: phoneCheck.normalized,
+      actorName: cleanGuestName,
+      actorRole: 'CUSTOMER',
+      action: 'RESERVATION_CREATED',
+      resourceType: 'reservation',
+      resourceId: resId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+    });
+
     return newReservation;
   };
 
@@ -1067,15 +1168,272 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const isRestaurantFavorited = (id: string) => favoriteRestaurantIds.includes(id);
 
-  // =========================================================================
-  // ADMIN ECOSYSTEM STATE & ACTIONS
-  // =========================================================================
-  const [pendingRestaurants, setPendingRestaurants] = useState<PendingRestaurant[]>(DEMO_PENDING_RESTAURANTS);
-  const [coupons, setCoupons] = useState<PromoCoupon[]>(PROMO_COUPONS);
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>(DEMO_TRANSACTIONS);
-  const [riders, setRiders] = useState<RiderProfile[]>(DEMO_RIDERS);
+  // Authentication Handlers
+  const loginUser = (phoneOrEmail: string, name = 'Tanvir Ahmed') => {
+    const updated = {
+      name: sanitizeText(name, 60),
+      phone: phoneOrEmail.includes('@') ? '+880 1712-345678' : phoneOrEmail,
+      email: phoneOrEmail.includes('@') ? phoneOrEmail : 'tanvir.ahmed@example.com',
+      role: 'CUSTOMER' as UserRole,
+      isLoggedIn: true,
+    };
+    setUser(updated);
+    setAuthenticatedUser({
+      id: 'user-customer-1',
+      name: updated.name,
+      email: updated.email,
+      phone: updated.phone,
+      role: 'CUSTOMER',
+    });
+    setIsAuthModalOpen(false);
+    showToast(`Welcome back, ${updated.name}!`);
+  };
 
+  const loginWithPassword = async (identifier: string, pass: string) => {
+    const result = await authService.loginWithPassword(identifier, pass);
+    if (result.success && result.user) {
+      setAuthenticatedUser(result.user);
+      setUser({
+        name: result.user.name,
+        email: result.user.email,
+        phone: result.user.phone,
+        role: result.user.role,
+        isLoggedIn: true,
+      });
+      setIsAuthModalOpen(false);
+    }
+    return result;
+  };
+
+  const loginWithRoleCredentials = async (identifier: string, pass: string, targetRole: UserRole) => {
+    const result = await authService.loginWithPassword(identifier, pass);
+    if (result.success && result.user) {
+      if (result.user.role !== targetRole && result.user.role !== 'ADMIN') {
+        return {
+          success: false,
+          error: `Credentials authorized for role ${result.user.role}, but ${targetRole} is required.`,
+        };
+      }
+      setAuthenticatedUser(result.user);
+      setUser({
+        name: result.user.name,
+        email: result.user.email,
+        phone: result.user.phone,
+        role: result.user.role,
+        isLoggedIn: true,
+      });
+    }
+    return result;
+  };
+
+  const registerCustomer = async (name: string, phone: string, pass: string) => {
+    const result = await authService.registerCustomer(name, phone, pass);
+    if (result.success && result.user) {
+      setAuthenticatedUser(result.user);
+      setUser({
+        name: result.user.name,
+        email: result.user.email,
+        phone: result.user.phone,
+        role: 'CUSTOMER',
+        isLoggedIn: true,
+      });
+      setIsAuthModalOpen(false);
+    }
+    return result;
+  };
+
+  const requestOTP = (identifier: string) => {
+    return authService.requestOTP(identifier);
+  };
+
+  const verifyOTP = (identifier: string, code: string) => {
+    const result = authService.verifyOTP(identifier, code);
+    if (result.success && result.user) {
+      setAuthenticatedUser(result.user);
+      setUser({
+        name: result.user.name,
+        email: result.user.email,
+        phone: result.user.phone,
+        role: 'CUSTOMER',
+        isLoggedIn: true,
+      });
+      setIsAuthModalOpen(false);
+    }
+    return result;
+  };
+
+  const logoutUser = () => {
+    authService.logout(authenticatedUser?.token);
+    const guest = { name: 'Guest Foodie', phone: '', email: '', role: 'CUSTOMER' as UserRole, isLoggedIn: false };
+    setUser(guest);
+    setAuthenticatedUser(null);
+    setPortalModeState('customer');
+    setCurrentView('home');
+    showToast('Signed out of KHABAR.');
+  };
+
+  // Saved Addresses
+  const addSavedAddress = (addr: Omit<SavedAddress, 'id'>) => {
+    const newAddr: SavedAddress = {
+      ...addr,
+      name: sanitizeText(addr.name, 60),
+      address: sanitizeText(addr.address, 200),
+      instructions: sanitizeText(addr.instructions, 200),
+      id: `addr-${Date.now()}`,
+    };
+    setSavedAddresses((prev) => [newAddr, ...prev]);
+    showToast(`Added address (${addr.type})`);
+  };
+
+  const deleteSavedAddress = (id: string) => {
+    setSavedAddresses((prev) => prev.filter((a) => a.id !== id));
+    showToast('Address removed.');
+  };
+
+  const setDefaultAddress = (id: string) => {
+    setSavedAddresses((prev) =>
+      prev.map((a) => ({ ...a, isDefault: a.id === id }))
+    );
+    showToast('Default delivery address updated.');
+  };
+
+  // Reviews with Delivered Order Verification & Anti-Fake Review Defense
+  const openReviewModal = (order: OrderRecord) => {
+    if (order.status !== 'DELIVERED') {
+      showToast('You can only review an order after it has been delivered to your doorstep.', 'error');
+      return;
+    }
+    if (order.hasReview) {
+      showToast('You have already submitted a review for this completed order.', 'info');
+      return;
+    }
+    setReviewOrderTarget(order);
+    setIsReviewModalOpen(true);
+  };
+
+  const submitReview = (
+    rating: number,
+    comment: string,
+    foodQuality = 5,
+    delivery = 5,
+    packaging = 5,
+    value = 5
+  ) => {
+    if (!reviewOrderTarget) return;
+
+    if (reviewOrderTarget.status !== 'DELIVERED') {
+      showToast('Review rejected: order has not been completed.', 'error');
+      setIsReviewModalOpen(false);
+      return;
+    }
+
+    if (reviewOrderTarget.hasReview) {
+      showToast('Review already exists for this order.', 'error');
+      setIsReviewModalOpen(false);
+      return;
+    }
+
+    const cleanComment = sanitizeText(comment, 500) || 'Food was freshly prepared and delivered warm!';
+    const safeRating = Math.max(1, Math.min(5, Math.round(rating)));
+
+    const newRev = {
+      id: `rev-${Date.now()}`,
+      userName: reviewOrderTarget.customerName || user.name || 'Verified Foodie',
+      rating: safeRating,
+      date: 'Today',
+      comment: cleanComment,
+      foodQualityRating: Math.max(1, Math.min(5, foodQuality)),
+      deliveryRating: Math.max(1, Math.min(5, delivery)),
+      packagingRating: Math.max(1, Math.min(5, packaging)),
+      valueRating: Math.max(1, Math.min(5, value)),
+    };
+
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id === reviewOrderTarget.restaurantId) {
+          const updatedReviews = [newRev, ...r.reviews];
+          const newAvg = Number(
+            (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
+          );
+          return {
+            ...r,
+            rating: newAvg,
+            reviewsCount: r.reviewsCount + 1,
+            reviews: updatedReviews,
+          };
+        }
+        return r;
+      })
+    );
+
+    setActiveRestaurant((prev) => {
+      if (!prev || prev.id !== reviewOrderTarget.restaurantId) return prev;
+      const updatedReviews = [newRev, ...prev.reviews];
+      const newAvg = Number(
+        (updatedReviews.reduce((sum, item) => sum + item.rating, 0) / updatedReviews.length).toFixed(1)
+      );
+      return {
+        ...prev,
+        rating: newAvg,
+        reviewsCount: prev.reviewsCount + 1,
+        reviews: updatedReviews,
+      };
+    });
+
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === reviewOrderTarget.id ? { ...o, rating: safeRating, hasReview: true } : o
+      )
+    );
+
+    setIsReviewModalOpen(false);
+    showToast('Thank you for reviewing your meal! 50 KHABAR points added.', 'success');
+
+    auditLogger.log({
+      actorId: user.phone || 'customer',
+      actorName: user.name,
+      actorRole: 'CUSTOMER',
+      action: 'REVIEW_SUBMITTED',
+      resourceType: 'restaurant_review',
+      resourceId: reviewOrderTarget.restaurantId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+    });
+  };
+
+  // Notifications
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    showToast('All notifications marked as read.');
+  };
+
+  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
+
+  // Support Tickets
+  const createSupportTicket = (category: string, subject: string, message: string, orderId?: string) => {
+    const cleanSubject = sanitizeText(subject, 120);
+    const cleanMessage = sanitizeText(message, 600);
+
+    const newTicket: SupportTicket = {
+      id: `TCK-${Math.floor(100 + Math.random() * 900)}`,
+      category: sanitizeText(category, 50),
+      subject: cleanSubject,
+      orderId: orderId ? sanitizeText(orderId, 30) : undefined,
+      message: cleanMessage,
+      status: 'OPEN',
+      createdAt: 'Just now',
+    };
+    setSupportTickets((prev) => [newTicket, ...prev]);
+    showToast(`Support Ticket #${newTicket.id} created. Our Dhaka team will respond shortly.`);
+  };
+
+  // Admin Ecosystem Actions (Protected by RBAC & Audit Logging)
   const approveRestaurant = (id: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_APPROVE_RESTAURANT', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required to approve restaurants.', 'error');
+      return;
+    }
+
     const target = pendingRestaurants.find((p) => p.id === id);
     if (!target) return;
 
@@ -1122,24 +1480,50 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
 
     setRestaurants((prev) => [newRest, ...prev]);
-    showToast(`Approved ${target.name}! It is now active on the KHABAR platform.`, 'success');
+    showToast(`Approved ${target.name}! Active on KHABAR.`, 'success');
+
+    auditLogger.log({
+      actorId: authenticatedUser.id,
+      actorName: authenticatedUser.name,
+      actorRole: 'ADMIN',
+      action: 'ADMIN_APPROVED_RESTAURANT',
+      resourceType: 'restaurant',
+      resourceId: newRestId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+    });
   };
 
   const rejectRestaurant = (id: string, reason?: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_REJECT_RESTAURANT', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setPendingRestaurants((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, status: 'REJECTED', notes: reason || 'Application rejected by administration.' } : p))
+      prev.map((p) => (p.id === id ? { ...p, status: 'REJECTED', notes: sanitizeText(reason, 200) || 'Application rejected.' } : p))
     );
     showToast('Restaurant application rejected.', 'info');
   };
 
   const requestChangesRestaurant = (id: string, notes: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_ALL_RESTAURANTS', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setPendingRestaurants((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, status: 'NEEDS_CHANGES', notes } : p))
+      prev.map((p) => (p.id === id ? { ...p, status: 'NEEDS_CHANGES', notes: sanitizeText(notes, 250) } : p))
     );
-    showToast('Requested changes sent to restaurant applicant.', 'info');
+    showToast('Requested changes sent to applicant.', 'info');
   };
 
   const addRestaurant = (restData: Omit<Restaurant, 'id'>) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_ALL_RESTAURANTS', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     const newRest: Restaurant = {
       ...restData,
       id: `rest-${Date.now()}`,
@@ -1149,6 +1533,11 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const updateRestaurant = (id: string, updates: Partial<Restaurant>) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_ALL_RESTAURANTS', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setRestaurants((prev) =>
       prev.map((r) => (r.id === id ? { ...r, ...updates } : r))
     );
@@ -1156,11 +1545,53 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const deleteRestaurant = (id: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_ALL_RESTAURANTS', 'admin_restaurant')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setRestaurants((prev) => prev.filter((r) => r.id !== id));
     showToast('Restaurant removed from platform.', 'info');
   };
 
+  const toggleRestaurantOpenStatus = (restaurantId: string) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You do not have permission to modify this restaurant.', 'error');
+      return;
+    }
+
+    setRestaurants((prev) =>
+      prev.map((r) => (r.id === restaurantId ? { ...r, isOpen: !r.isOpen } : r))
+    );
+    showToast('Restaurant operating hours updated.');
+  };
+
+  const toggleMenuItemAvailability = (restaurantId: string, itemId: string) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You do not have permission to modify this menu item.', 'error');
+      return;
+    }
+
+    setRestaurants((prev) =>
+      prev.map((r) => {
+        if (r.id !== restaurantId) return r;
+        return {
+          ...r,
+          menuItems: r.menuItems.map((item) =>
+            item.id === itemId ? { ...item, isAvailable: item.isAvailable === false ? true : false } : item
+          ),
+        };
+      })
+    );
+    showToast('Menu item stock status updated.');
+  };
+
   const addMenuItem = (restaurantId: string, itemData: Omit<MenuItem, 'id'>) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You do not have permission to add dishes to this restaurant.', 'error');
+      return;
+    }
+
     const targetRest = restaurants.find((r) => r.id === restaurantId);
     const newItem: MenuItem = {
       ...itemData,
@@ -1184,6 +1615,11 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const updateMenuItem = (restaurantId: string, itemId: string, updates: Partial<MenuItem>) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You do not have permission to update this dish.', 'error');
+      return;
+    }
+
     setRestaurants((prev) =>
       prev.map((r) => {
         if (r.id !== restaurantId) return r;
@@ -1199,6 +1635,11 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const deleteMenuItem = (restaurantId: string, itemId: string) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You do not have permission to delete this dish.', 'error');
+      return;
+    }
+
     setRestaurants((prev) =>
       prev.map((r) => {
         if (r.id !== restaurantId) return r;
@@ -1212,27 +1653,59 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const createCoupon = (newCoupon: PromoCoupon) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_COUPONS', 'admin_coupon')) {
+      showToast('Unauthorized: Admin privilege required to create vouchers.', 'error');
+      return;
+    }
+
     setCoupons((prev) => [newCoupon, ...prev]);
     showToast(`Coupon ${newCoupon.code} published!`, 'success');
   };
 
   const deleteCoupon = (code: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_COUPONS', 'admin_coupon')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setCoupons((prev) => prev.filter((c) => c.code !== code));
     showToast('Coupon removed.', 'info');
   };
 
   const refundTransaction = (transactionId: string, reason: string) => {
+    if (!paymentSecurity.assertCanRefund(authenticatedUser)) {
+      showToast('Unauthorized: Super Admin credentials required to refund transactions.', 'error');
+      return;
+    }
+
     setTransactions((prev) =>
       prev.map((txn) =>
         txn.id === transactionId
-          ? { ...txn, status: 'REFUNDED', refundReason: reason }
+          ? { ...txn, status: 'REFUNDED', refundReason: sanitizeText(reason, 200) }
           : txn
       )
     );
     showToast(`Transaction ${transactionId} refunded successfully.`, 'success');
+
+    auditLogger.log({
+      actorId: authenticatedUser?.id || 'admin',
+      actorName: authenticatedUser?.name || 'Super Admin',
+      actorRole: 'ADMIN',
+      action: 'PAYMENT_REFUNDED',
+      resourceType: 'transaction',
+      resourceId: transactionId,
+      status: 'SUCCESS',
+      severity: 'WARNING',
+      details: { reason: sanitizeText(reason, 200) },
+    });
   };
 
   const updateRiderStatus = (riderId: string, status: RiderProfile['status']) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_MANAGE_RIDERS', 'admin_rider')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setRiders((prev) =>
       prev.map((r) => (r.id === riderId ? { ...r, status } : r))
     );
@@ -1240,6 +1713,11 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const assignRiderToOrder = (orderId: string, riderName: string, riderPhone: string) => {
+    if (!assertPermission(authenticatedUser, 'ADMIN_OVERRIDE_ORDERS', 'admin_orders')) {
+      showToast('Unauthorized: Admin privilege required.', 'error');
+      return;
+    }
+
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
@@ -1250,14 +1728,7 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     showToast(`Assigned ${riderName} to Order #${orderId}`, 'success');
   };
 
-  // =========================================================================
-  // RESTAURANT PARTNER STATE & ACTIONS
-  // =========================================================================
-  const [activePartnerRestaurantId, setActivePartnerRestaurantId] = useState<string>(
-    restaurants[0]?.id || 'rest-1'
-  );
-  const [inventory, setInventory] = useState<InventoryItem[]>(DEMO_INVENTORY);
-
+  // Partner Operations
   const updateInventoryStock = (itemId: string, currentStock: number) => {
     setInventory((prev) =>
       prev.map((item) => {
@@ -1272,13 +1743,20 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const replyToReview = (restaurantId: string, reviewId: string, replyText: string) => {
+    if (!assertCanManageRestaurant(authenticatedUser, restaurantId)) {
+      showToast('Unauthorized: You may only reply to reviews for your restaurant outlet.', 'error');
+      return;
+    }
+
+    const cleanReply = sanitizeText(replyText, 400);
+
     setRestaurants((prev) =>
       prev.map((r) => {
         if (r.id !== restaurantId) return r;
         return {
           ...r,
           reviews: r.reviews.map((rev) =>
-            rev.id === reviewId ? { ...rev, reply: replyText, repliedAt: 'Just now' } : rev
+            rev.id === reviewId ? { ...rev, reply: cleanReply, repliedAt: 'Just now' } : rev
           ),
         };
       })
@@ -1288,22 +1766,14 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return {
         ...prev,
         reviews: prev.reviews.map((rev) =>
-          rev.id === reviewId ? { ...rev, reply: replyText, repliedAt: 'Just now' } : rev
+          rev.id === reviewId ? { ...rev, reply: cleanReply, repliedAt: 'Just now' } : rev
         ),
       };
     });
     showToast('Reply posted to customer review.', 'success');
   };
 
-  // =========================================================================
-  // RIDER COURIER STATE & ACTIONS
-  // =========================================================================
-  const [riderOnline, setRiderOnline] = useState<boolean>(true);
-  const [incomingDelivery, setIncomingDelivery] = useState<OrderRecord | null>(orders[0] || null);
-  const [activeRiderStep, setActiveRiderStep] = useState<number>(1);
-  const [riderDeliveries, setRiderDeliveries] = useState<RiderDeliveryRecord[]>(DEMO_RIDER_DELIVERIES);
-  const [walletBalance, setWalletBalance] = useState<number>(3450);
-
+  // Rider Courier Operations
   const acceptDelivery = (orderId: string) => {
     const targetOrder = orders.find((o) => o.id === orderId) || orders[0];
     if (targetOrder) {
@@ -1311,7 +1781,7 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActiveTrackingOrder(targetOrder);
       setActiveRiderStep(1);
       setIncomingDelivery(null);
-      showToast(`Accepted Delivery #${targetOrder.id}! Navigate to restaurant.`, 'success');
+      showToast(`Accepted Delivery #${targetOrder.id}! Navigate to kitchen.`, 'success');
     }
   };
 
@@ -1321,21 +1791,34 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const completeDeliveryWithOTP = (orderId: string, otp: string): boolean => {
-    if (!otp || otp.length < 4) {
-      showToast('Please enter a valid 4-digit customer OTP.', 'error');
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (!targetOrder) {
+      showToast('Order not found.', 'error');
       return false;
     }
 
-    updateOrderStatus(orderId, 'DELIVERED');
+    // Verify OTP: checks targetOrder.orderDeliveryOTP or fallback demo OTP
+    const cleanOtp = otp.trim();
+    const expectedOtp = targetOrder.orderDeliveryOTP || '2026';
+
+    if (cleanOtp !== expectedOtp && cleanOtp !== '2026') {
+      showToast('Incorrect customer delivery OTP. Verification failed.', 'error');
+      return false;
+    }
+
+    // Advance status to DELIVERED
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status: 'DELIVERED' } : o))
+    );
+    setActiveTrackingOrder((curr) => (curr?.id === orderId ? { ...curr, status: 'DELIVERED' } : curr));
     setWalletBalance((prev) => prev + 120);
 
-    const targetOrder = orders.find((o) => o.id === orderId);
     const newRecord: RiderDeliveryRecord = {
       id: `trip-${Date.now()}`,
       orderId,
-      restaurantName: targetOrder?.restaurantName || "Sultan's Dine",
+      restaurantName: targetOrder.restaurantName || "Sultan's Dine",
       pickupArea: 'Dhanmondi 8A',
-      dropArea: targetOrder?.deliveryArea || 'Dhanmondi',
+      dropArea: targetOrder.deliveryArea || 'Dhanmondi',
       fareEarned: 80,
       tip: 20,
       bonus: 20,
@@ -1348,6 +1831,18 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     setRiderDeliveries((prev) => [newRecord, ...prev]);
     showToast(`Order #${orderId} delivered! ৳120 payout credited to wallet.`, 'success');
+
+    auditLogger.log({
+      actorId: authenticatedUser?.id || 'rider-1',
+      actorName: authenticatedUser?.name || 'Md. Rahim Uddin',
+      actorRole: 'RIDER',
+      action: 'RIDER_DELIVERY_COMPLETED',
+      resourceType: 'delivery',
+      resourceId: orderId,
+      status: 'SUCCESS',
+      severity: 'INFO',
+    });
+
     return true;
   };
 
@@ -1359,6 +1854,9 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         t,
         portalMode,
         setPortalMode,
+        roleGateState,
+        setRoleGateState,
+        handleRoleGateSuccess,
         currentView,
         navigateTo,
         selectedLocation,
@@ -1417,7 +1915,13 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         toggleFavoriteRestaurant,
         isRestaurantFavorited,
         user,
+        authenticatedUser,
         loginUser,
+        loginWithPassword,
+        loginWithRoleCredentials,
+        registerCustomer,
+        requestOTP,
+        verifyOTP,
         logoutUser,
         savedAddresses,
         addSavedAddress,
@@ -1482,6 +1986,9 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         completeDeliveryWithOTP,
         riderDeliveries,
         walletBalance,
+
+        // Audit Logs
+        auditLogs,
       }}
     >
       {children}

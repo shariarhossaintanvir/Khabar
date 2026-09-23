@@ -87,10 +87,16 @@ export const AdminDashboardView: React.FC = () => {
     toggleMenuItemAvailability,
     formatBDT,
     showToast,
+    auditLogs,
+    authenticatedUser,
   } = useKhabar();
 
   // Navigation State
   const [activeNav, setActiveNav] = useState<string>('overview');
+
+  // Audit Logs Filter State
+  const [auditRoleFilter, setAuditRoleFilter] = useState<string>('ALL');
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>('');
 
   // Modals State
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -127,9 +133,16 @@ export const AdminDashboardView: React.FC = () => {
   const [activeRole, setActiveRole] = useState<'SUPER_ADMIN' | 'OPERATIONS' | 'FINANCE' | 'SUPPORT'>('SUPER_ADMIN');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(true);
 
-  // 14 Nav Items configuration
+  // Nav Items configuration
   const adminNavItems: NavItemConfig[] = [
     { id: 'overview', label: 'Overview', icon: <Compass className="w-4 h-4" /> },
+    {
+      id: 'security-audit',
+      label: 'Security & Audit Logs',
+      icon: <Shield className="w-4 h-4 text-emerald-500" />,
+      badge: auditLogs?.length || 0,
+      badgeColor: 'emerald',
+    },
     {
       id: 'orders',
       label: 'Orders',
@@ -1653,6 +1666,166 @@ export const AdminDashboardView: React.FC = () => {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 15. SECURITY & AUDIT LOGS SECTION */}
+      {activeNav === 'security-audit' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold mb-2">
+                <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Zero-Trust Security Engine Active</span>
+              </div>
+              <h2 className="font-display font-black text-2xl text-slate-900 tracking-tight">
+                Security & Audit Logs
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Real-time immutable audit trail for role transitions, pricing validations, authentication, and platform overrides.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500">Active Operator:</span>
+              <span className="px-3 py-1 rounded-xl bg-slate-900 text-white text-xs font-bold shadow-xs">
+                {authenticatedUser?.name || 'Operations Super Admin'} ({authenticatedUser?.role || 'ADMIN'})
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
+              <span className="text-[11px] font-semibold text-slate-500 block mb-1">Total Audit Events</span>
+              <span className="font-display font-black text-2xl text-slate-900">{auditLogs.length}</span>
+              <span className="text-[10px] text-emerald-600 font-bold block mt-1">● Active Monitoring</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
+              <span className="text-[11px] font-semibold text-slate-500 block mb-1">Cryptographic Hashing</span>
+              <span className="font-display font-black text-xl text-emerald-600">PBKDF2-SHA256</span>
+              <span className="text-[10px] text-slate-400 block mt-1">100,000 Iterations</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
+              <span className="text-[11px] font-semibold text-slate-500 block mb-1">Access Control Model</span>
+              <span className="font-display font-black text-xl text-brand-600">Strict RBAC</span>
+              <span className="text-[10px] text-slate-400 block mt-1">BOLA/IDOR Guarded</span>
+            </div>
+            <div className="p-4 rounded-3xl bg-white border border-slate-200/80 shadow-xs">
+              <span className="text-[11px] font-semibold text-slate-500 block mb-1">Blocked Security Events</span>
+              <span className="font-display font-black text-2xl text-rose-600">
+                {auditLogs.filter((l) => l.status === 'BLOCKED').length}
+              </span>
+              <span className="text-[10px] text-rose-500 font-bold block mt-1">Unauthorized attempts neutralized</span>
+            </div>
+          </div>
+
+          {/* Filters & Search */}
+          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={auditSearchQuery}
+                  onChange={(e) => setAuditSearchQuery(e.target.value)}
+                  placeholder="Filter logs by actor, action, or ID..."
+                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto">
+                {['ALL', 'ADMIN', 'CUSTOMER', 'RESTAURANT', 'RIDER', 'SYSTEM'].map((role) => (
+                  <button
+                    key={role}
+                    onClick={() => setAuditRoleFilter(role)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      auditRoleFilter === role
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {role}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Audit Logs Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    <th className="pb-3 pl-2">Timestamp</th>
+                    <th className="pb-3">Actor & Role</th>
+                    <th className="pb-3">Security Action</th>
+                    <th className="pb-3">Resource Target</th>
+                    <th className="pb-3">Status</th>
+                    <th className="pb-3 pr-2">Metadata Details</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                  {auditLogs
+                    .filter((log) => {
+                      if (auditRoleFilter !== 'ALL' && log.actorRole !== auditRoleFilter) return false;
+                      if (!auditSearchQuery.trim()) return true;
+                      const q = auditSearchQuery.toLowerCase();
+                      return (
+                        log.action.toLowerCase().includes(q) ||
+                        log.actorName.toLowerCase().includes(q) ||
+                        log.resourceType.toLowerCase().includes(q) ||
+                        (log.resourceId && log.resourceId.toLowerCase().includes(q))
+                      );
+                    })
+                    .map((log) => (
+                      <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 pl-2 text-slate-400 text-[11px] whitespace-nowrap">
+                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          <span className="block text-[9px] text-slate-400">
+                            {new Date(log.timestamp).toLocaleDateString()}
+                          </span>
+                        </td>
+                        <td className="py-3 whitespace-nowrap">
+                          <span className="font-bold text-slate-900 block">{log.actorName}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 font-bold text-slate-600">
+                            {log.actorRole}
+                          </span>
+                        </td>
+                        <td className="py-3 whitespace-nowrap">
+                          <span className="font-mono text-[11px] font-bold text-slate-900 block">
+                            {log.action}
+                          </span>
+                        </td>
+                        <td className="py-3 whitespace-nowrap">
+                          <span className="text-slate-600 block">{log.resourceType}</span>
+                          {log.resourceId && (
+                            <span className="text-[10px] font-mono text-slate-400 block">
+                              #{log.resourceId}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 whitespace-nowrap">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
+                              log.status === 'SUCCESS'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : log.status === 'BLOCKED'
+                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            }`}
+                          >
+                            <span>●</span>
+                            <span>{log.status}</span>
+                          </span>
+                        </td>
+                        <td className="py-3 pr-2 text-slate-500 text-[11px] max-w-xs truncate">
+                          {log.details ? JSON.stringify(log.details) : 'Standard event'}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

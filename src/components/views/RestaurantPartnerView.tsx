@@ -59,11 +59,20 @@ export const RestaurantPartnerView: React.FC = () => {
     updateInventoryStock,
     formatBDT,
     showToast,
+    authenticatedUser,
   } = useKhabar();
 
-  // Selected branch/restaurant outlet
-  const [selectedOutletId, setSelectedOutletId] = useState<string>(restaurants[0]?.id || 'takeout');
-  const activeRest: Restaurant = restaurants.find((r) => r.id === selectedOutletId) || restaurants[0];
+  // Selected branch/restaurant outlet with RBAC isolation
+  const isSuperAdmin = authenticatedUser?.role === 'ADMIN';
+  const authorizedOutletId = authenticatedUser?.restaurantId || 'takeout';
+  const [selectedOutletId, setSelectedOutletId] = useState<string>(
+    isSuperAdmin ? (restaurants[0]?.id || 'takeout') : authorizedOutletId
+  );
+  const availableOutlets = isSuperAdmin
+    ? restaurants
+    : restaurants.filter((r) => r.id === authorizedOutletId);
+  const activeRest: Restaurant =
+    availableOutlets.find((r) => r.id === selectedOutletId) || availableOutlets[0] || restaurants[0];
 
   // Navigation
   const [activeNav, setActiveNav] = useState<string>('kds');
@@ -135,15 +144,16 @@ export const RestaurantPartnerView: React.FC = () => {
         <Store className="w-3.5 h-3.5 text-amber-600" />
         <select
           value={selectedOutletId}
+          disabled={!isSuperAdmin && availableOutlets.length <= 1}
           onChange={(e) => {
             setSelectedOutletId(e.target.value);
             showToast(`Switched active branch to ${restaurants.find((r) => r.id === e.target.value)?.name}`);
           }}
-          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden"
+          className="bg-transparent text-xs font-bold text-slate-800 focus:outline-hidden disabled:opacity-90"
         >
-          {restaurants.map((r) => (
+          {availableOutlets.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.name}
+              {r.name} {!isSuperAdmin && '(Authorized)'}
             </option>
           ))}
         </select>
