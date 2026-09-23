@@ -1,44 +1,143 @@
 # ==============================================================================
-# KHABAR — Production Security & Environment Git Ignore
+# KHABAR — Comprehensive Production Security & Environment Git Ignore
+# Platform: KHABAR — Restaurant & Food Delivery Platform
+# Standard: Zero-Trust Secrets Management & DevSecOps Hardened
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. SECURITY & SENSITIVE CREDENTIALS (NEVER COMMIT TO GITHUB)
+# 1. SENSITIVE CREDENTIALS, SECRETS & ENVIRONMENT FILES (NEVER COMMIT)
 # ------------------------------------------------------------------------------
-# Environment variable files containing secrets, API keys, and tokens
+# Environment configuration containing database credentials, JWT keys, and API tokens
 .env
-.env.development.local
-.env.test.local
-.env.production.local
 .env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.staging
+.env.staging.local
 .env.*
+*.env
+# Safe committed example templates (explicitly exempted)
 !.env.example
+!.env.template
 
-# Private keys, certificates, and auth credentials
+# Secret vaults, keys and tokens
+.secrets
+.secrets.*
+secrets.*
+secret.*
+*.secrets
+*.vault
+
+# ------------------------------------------------------------------------------
+# 2. PRIVATE KEYS, CERTIFICATES & ASYMMETRIC CIPHERS
+# ------------------------------------------------------------------------------
+# Private keys, SSL/TLS certificates and keypairs
 *.pem
 *.key
-*.crt
-*.pfx
+*.pkcs12
 *.p12
+*.pfx
+*.crt
 *.cer
 *.der
+*.csr
 *.keystore
 *.jks
+*.crl
+
+# SSH private and public keys
 id_rsa
 id_rsa.pub
+id_dsa
+id_dsa.pub
+id_ecdsa
+id_ecdsa.pub
 id_ed25519
 id_ed25519.pub
+*.ppk
+known_hosts
+authorized_keys
 
-# Cloud & Service provider secrets
+# VPN & Tunnel credentials
+*.ovpn
+
+# ------------------------------------------------------------------------------
+# 3. CLOUD, SERVICE PROVIDER & PAYMENT GATEWAY SECRETS
+# ------------------------------------------------------------------------------
+# GCP & Firebase Service Accounts
 credentials.json
 client_secret*.json
 service-account*.json
-*.publishsettings
 google-services.json
 GoogleService-Info.plist
+.gcloud/
+gcloud/
+
+# AWS & Cloud Provider Credentials
+.aws/
+aws/credentials
+aws/config
+
+# Azure & Kubernetes Credentials
+.azure/
+.kube/
+kubeconfig
+kubeconfig.yaml
+kubeconfig.yml
+*.publishsettings
+
+# Mobile Financial Services (MFS) & Payment Secrets
+*bkash*.secret
+*bkash*.key
+*nagad*.key
+*nagad*.secret
+*stripe*.key
+*stripe*.secret
+
+# Authentication & CLI Tokens
+.token
+*.token
+tokens.json
+gh-token
+github_token*
+.git-credentials
+.netrc
+
+# Package Manager Auth Config (Prevents NPM / Yarn Publish Token Leaks)
+.npmrc
+.yarnrc
+.yarnrc.yml
 
 # ------------------------------------------------------------------------------
-# 2. DEPENDENCIES & PACKAGE MANAGERS
+# 4. DATABASE DUMPS, STORAGE SNAPSHOTS & AUDIT LOG EXPORTS
+# ------------------------------------------------------------------------------
+# SQLite, SQL dumps and database backups
+*.sqlite
+*.sqlite3
+*.db
+*.db3
+*.s3db
+*.sql
+*.dump
+*.rdb
+*.sql.gz
+*.sql.zip
+
+# Exported audit logs and storage state dumps
+audit_logs.json
+audit_logs.csv
+audit_logs/
+audit-logs/
+storage.json
+local_storage.json
+*.localstorage
+
+# ------------------------------------------------------------------------------
+# 5. DEPENDENCIES & PACKAGE MANAGERS
 # ------------------------------------------------------------------------------
 node_modules/
 npm-debug.log*
@@ -50,7 +149,7 @@ lerna-debug.log*
 .pnp.js
 
 # ------------------------------------------------------------------------------
-# 3. PRODUCTION BUILDS & COMPILER OUTPUTS
+# 6. PRODUCTION BUILDS & COMPILER OUTPUTS
 # ------------------------------------------------------------------------------
 dist/
 dist-ssr/
@@ -61,16 +160,19 @@ out/
 .vite/
 
 # ------------------------------------------------------------------------------
-# 4. LOGS & SYSTEM RUNTIME
+# 7. LOGS, RUNTIME PIDS & DIAGNOSTIC DUMPS
 # ------------------------------------------------------------------------------
 logs/
 *.log
 *.pid
 *.seed
 *.pid.lock
+core
+core.*
+*.dmp
 
 # ------------------------------------------------------------------------------
-# 5. TESTING, COVERAGE & PLAYWRIGHT ARTIFACTS
+# 8. TESTING, COVERAGE & PLAYWRIGHT ARTIFACTS
 # ------------------------------------------------------------------------------
 coverage/
 .nyc_output/
@@ -79,7 +181,50 @@ test-results/
 .playwright/
 
 # ------------------------------------------------------------------------------
-# 6. OPERATING SYSTEM & METADATA
+# 9. IDE, CODE EDITORS & WORKSPACE STATE
+# ------------------------------------------------------------------------------
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# JetBrains / IntelliJ / WebStorm
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swo
+*.swn
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# Agentic IDE & AI tool metadata
+.agents/
+.gemini/
+
+# ------------------------------------------------------------------------------
+# 10. BACKUPS & TEMPORARY FILES
+# ------------------------------------------------------------------------------
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+*~
+.cache/
+.tmp/
+.temp/
+*.tmp
+.eslintcache
+.stylelintcache
+
+# ------------------------------------------------------------------------------
+# 11. OPERATING SYSTEM & METADATA
 # ------------------------------------------------------------------------------
 # macOS
 .DS_Store
@@ -101,36 +246,4 @@ $RECYCLE.BIN/
 *.lnk
 
 # Linux
-*~
 .directory
-
-# ------------------------------------------------------------------------------
-# 7. IDE & CODE EDITORS
-# ------------------------------------------------------------------------------
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
-.idea/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-*.swo
-*.swn
-*.bak
-*.sublime-project
-*.sublime-workspace
-.project
-.classpath
-.settings/
-
-# ------------------------------------------------------------------------------
-# 8. TEMPORARY & CACHE DIRECTORIES
-# ------------------------------------------------------------------------------
-.cache/
-.tmp/
-.temp/
-*.tmp
-.eslintcache
-.stylelintcache
