@@ -409,24 +409,102 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   // Authentication State
-  const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>({
-    id: 'user-customer-1',
-    name: 'Tanvir Ahmed',
-    email: 'tanvir@khabar.com',
-    phone: '+8801712345678',
-    role: 'CUSTOMER',
+  const [authenticatedUser, setAuthenticatedUser] = useState<AuthenticatedUser | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const modeParam = params.get('mode');
+      if (modeParam === 'admin') {
+        return {
+          id: 'user-admin-1',
+          name: 'Operations Admin',
+          email: 'admin@khabar.com',
+          phone: '+8801700000001',
+          role: 'ADMIN',
+        };
+      }
+      if (modeParam === 'partner') {
+        return {
+          id: 'user-partner-1',
+          name: 'Takeout Kitchen Lead',
+          email: 'partner@takeout.com',
+          phone: '+8801700000002',
+          role: 'RESTAURANT',
+          restaurantId: 'takeout',
+        };
+      }
+      if (modeParam === 'rider') {
+        return {
+          id: 'user-rider-1',
+          name: 'Md. Rahim Uddin',
+          email: 'rider@khabar.com',
+          phone: '+8801819223344',
+          role: 'RIDER',
+          riderId: 'rider-1',
+        };
+      }
+    } catch {}
+    return {
+      id: 'user-customer-1',
+      name: 'Tanvir Ahmed',
+      email: 'tanvir@khabar.com',
+      phone: '+8801712345678',
+      role: 'CUSTOMER',
+    };
   });
 
-  const [user, setUser] = useState<UserProfile>({
-    name: 'Tanvir Ahmed',
-    phone: '+880 1712-345678',
-    email: 'tanvir@khabar.com',
-    role: 'CUSTOMER',
-    isLoggedIn: true,
+  const [user, setUser] = useState<UserProfile>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const modeParam = params.get('mode');
+      if (modeParam === 'admin') {
+        return {
+          name: 'Operations Admin',
+          email: 'admin@khabar.com',
+          phone: '+880 1700-000001',
+          role: 'ADMIN',
+          isLoggedIn: true,
+        };
+      }
+      if (modeParam === 'partner') {
+        return {
+          name: 'Takeout Kitchen Lead',
+          email: 'partner@takeout.com',
+          phone: '+880 1700-000002',
+          role: 'RESTAURANT',
+          isLoggedIn: true,
+        };
+      }
+      if (modeParam === 'rider') {
+        return {
+          name: 'Md. Rahim Uddin',
+          email: 'rider@khabar.com',
+          phone: '+880 1819-223344',
+          role: 'RIDER',
+          isLoggedIn: true,
+        };
+      }
+    } catch {}
+    return {
+      name: 'Tanvir Ahmed',
+      phone: '+880 1712-345678',
+      email: 'tanvir@khabar.com',
+      role: 'CUSTOMER',
+      isLoggedIn: true,
+    };
   });
 
   // Portal Mode & Role Gate State
-  const [portalMode, setPortalModeState] = useState<PortalMode>('customer');
+  const [portalMode, setPortalModeState] = useState<PortalMode>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const modeParam = params.get('mode') as PortalMode;
+      if (modeParam && ['customer', 'admin', 'partner', 'rider'].includes(modeParam)) {
+        return modeParam;
+      }
+    } catch {}
+    return 'customer';
+  });
+
   const [roleGateState, setRoleGateState] = useState<{
     isOpen: boolean;
     targetRole: UserRole;
@@ -437,7 +515,18 @@ export const KhabarProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   // Navigation
-  const [currentView, setCurrentView] = useState<KhabarView>('home');
+  const [currentView, setCurrentView] = useState<KhabarView>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const viewParam = params.get('view') as KhabarView;
+      if (viewParam) return viewParam;
+      const modeParam = params.get('mode');
+      if (modeParam && ['admin', 'partner', 'rider'].includes(modeParam)) {
+        return modeParam as KhabarView;
+      }
+    } catch {}
+    return 'home';
+  });
 
   // Role Gate Enforcement on Portal Switch
   const setPortalMode = (mode: PortalMode) => {
